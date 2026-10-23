@@ -1,0 +1,71 @@
+name: Build Fenix APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "CPU 架構"
+        required: true
+        default: "aarch64-linux-android"
+        type: choice
+        options:
+          - aarch64-linux-android   # 一般手機 (arm64)
+          - arm-linux-androideabi   # 舊款 32 位元手機
+          - x86_64-linux-android    # 模擬器
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      MOZCONFIG: ${{ github.workspace }}/../mozconfig-ci
+
+    steps:
+      # 免費 runner 只有約 14GB 可用空間，先清掉用不到的預裝工具
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force || true
+          df -h
+
+      # artifact mode 需要往回找有預編譯產物的祖先 commit，所以不能只抓 1 層歷史
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 200
+
+      - name: Cache ~/.mozbuild (toolchains, Android SDK/NDK)
+        uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-${{ runner.os }}-${{ inputs.target }}-${{ hashFiles('python/mozboot/mozboot/android.py') }}
+          restore-keys: |
+            mozbuild-${{ runner.os }}-${{ inputs.target }}-
+
+      - name: Write mozconfig
+        run: |
+          cat > "$MOZCONFIG" <<EOF
+          ac_add_options --enable-project=mobile/android
+          ac_add_options --target=${{ inputs.target }}
+          ac_add_options --enable-artifact-builds
+          mk_add_options MOZ_OBJDIR=./objdir-frontend
+          EOF
+          cat "$MOZCONFIG"
+
+      - name: Bootstrap
+        run: ./mach --no-interactive bootstrap --application-choice="GeckoView/Firefox for Android Artifact Mode"
+
+      - name: Build GeckoView (artifact mode)
+        run: ./mach build
+
+      - name: Build Fenix APK
+        run: ./mach gradle fenix:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: fenix-debug-${{ inputs.target }}
+          path: gradle/build/mobile/android/fenix/app/outputs/apk/**/*.apk
+          if-no-files-found: error
