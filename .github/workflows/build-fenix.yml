@@ -63,9 +63,12 @@ jobs:
       - name: Build Fenix APK
         run: ./mach gradle fenix:assembleDebug
 
+      - name: List APKs
+        run: find objdir-frontend/gradle/build -name '*.apk' -path '*outputs/apk*' -exec ls -lh {} \;
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: fenix-debug-${{ inputs.target }}
-          path: gradle/build/mobile/android/fenix/app/outputs/apk/**/*.apk
+          path: objdir-frontend/gradle/build/mobile/android/fenix/app/outputs/apk/**/*.apk
           if-no-files-found: error
