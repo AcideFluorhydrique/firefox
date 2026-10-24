@@ -217,10 +217,8 @@ class GkSkWStream final : public SkWStream {
   size_t mWritten = 0;
 };
 
-PrintTargetSkPDF::PrintTargetSkPDF(const IntSize& aSize,
-                                   UniquePtr<GkSkWStream> aStream)
-    : PrintTarget(/* not using cairo_surface_t */ nullptr, aSize),
-      mState(new SkPDFDocState(std::move(aStream))),
+PrintTargetSkPDF::PrintTargetSkPDF(UniquePtr<GkSkWStream> aStream)
+    : mState(new SkPDFDocState(std::move(aStream))),
       mRefState(new SkPDFDocState(std::make_unique<GkSkWStream>())) {}
 
 PrintTargetSkPDF::~PrintTargetSkPDF() {
@@ -228,9 +226,8 @@ PrintTargetSkPDF::~PrintTargetSkPDF() {
 }
 
 already_AddRefed<PrintTargetSkPDF> PrintTargetSkPDF::CreateOrNull(
-    nsIOutputStream* aStream, const IntSize& aSizeInPoints) {
-  return do_AddRef(
-      new PrintTargetSkPDF(aSizeInPoints, MakeUnique<GkSkWStream>(aStream)));
+    nsIOutputStream* aStream) {
+  return do_AddRef(new PrintTargetSkPDF(MakeUnique<GkSkWStream>(aStream)));
 }
 
 static SkPDF::Metadata GetDefaultMetadata() {
@@ -281,11 +278,8 @@ nsresult PrintTargetSkPDF::BeginPrinting(const nsAString& aTitle,
 }
 
 nsresult PrintTargetSkPDF::BeginPage(const IntSize& aSizeInPoints) {
-  const IntSize pageSize =
-      StaticPrefs::print_save_as_pdf_use_page_rule_size_as_paper_size_enabled()
-          ? aSizeInPoints
-          : mSize;
-  mState->mCanvas = mState->mDoc->beginPage(pageSize.width, pageSize.height);
+  mState->mCanvas =
+      mState->mDoc->beginPage(aSizeInPoints.width, aSizeInPoints.height);
   if (!mState->mCanvas) {
     return NS_ERROR_FAILURE;
   }
@@ -315,9 +309,6 @@ nsresult PrintTargetSkPDF::EndPrinting() {
 
 already_AddRefed<DrawTarget> PrintTargetSkPDF::MakeDrawTarget(
     const IntSize& aSize, DrawEventRecorder* aRecorder) {
-  if (aRecorder) {
-    return PrintTarget::MakeDrawTarget(aSize, aRecorder);
-  }
   if (!mState->mCanvas) {
     return nullptr;
   }
@@ -326,6 +317,9 @@ already_AddRefed<DrawTarget> PrintTargetSkPDF::MakeDrawTarget(
   if (!mPageDT) {
     mState->mCanvas = nullptr;
     return nullptr;
+  }
+  if (aRecorder) {
+    return CreateRecordingDrawTarget(aRecorder, mPageDT);
   }
   return do_AddRef(mPageDT);
 }
@@ -338,7 +332,7 @@ already_AddRefed<DrawTarget> PrintTargetSkPDF::GetReferenceDrawTarget() {
     if (!mRefState->mDoc) {
       return nullptr;
     }
-    mRefState->mCanvas = mRefState->mDoc->beginPage(mSize.width, mSize.height);
+    mRefState->mCanvas = mRefState->mDoc->beginPage(1, 1);
     if (!mRefState->mCanvas) {
       return nullptr;
     }
