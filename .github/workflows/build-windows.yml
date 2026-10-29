@@ -1,0 +1,81 @@
+name: Build Firefox Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    env:
+      MOZILLABUILD: 'C:\mozilla-build\'
+
+    steps:
+      # Windows 上必須在 MozillaBuild（Mozilla 自帶的 MSYS2 + Python 環境）裡跑 mach
+      - name: Install MozillaBuild
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe" -OutFile "$env:RUNNER_TEMP\MozillaBuildSetup.exe"
+          Start-Process -Wait -FilePath "$env:RUNNER_TEMP\MozillaBuildSetup.exe" -ArgumentList '/S'
+          Test-Path C:\mozilla-build\msys2\usr\bin\bash.exe
+          # 讓之後的步驟找得到 MozillaBuild 的工具（後加的排在 PATH 最前面）
+          "C:\mozilla-build\msys2\usr\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          "C:\mozilla-build\python3"       | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          "C:\mozilla-build\bin"           | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          Get-PSDrive -PSProvider FileSystem
+
+      # 避免 git 把換行轉成 CRLF、避免路徑過長
+      - name: Configure git
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Cache ~/.mozbuild (toolchains, Windows SDK)
+        uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-windows-${{ runner.arch }}-${{ hashFiles('python/mozboot/**') }}
+          restore-keys: |
+            mozbuild-windows-${{ runner.arch }}-
+
+      # mozconfig 直接放在原始碼根目錄，mach 會自動讀，免去 Windows/MSYS 路徑轉換的麻煩
+      - name: Write mozconfig
+        shell: C:\mozilla-build\msys2\usr\bin\bash.exe -eo pipefail {0}
+        run: |
+          cat > mozconfig <<'EOF'
+          ac_add_options --enable-project=browser
+          ac_add_options --disable-debug-symbols
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objdir-opt
+          EOF
+          cat mozconfig
+
+      - name: Bootstrap
+        shell: C:\mozilla-build\msys2\usr\bin\bash.exe -eo pipefail {0}
+        run: ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+
+      - name: Build
+        shell: C:\mozilla-build\msys2\usr\bin\bash.exe -eo pipefail {0}
+        run: ./mach build
+
+      # 產出免安裝的 .zip；要 .exe 安裝程式可以再加一步 ./mach build installer
+      - name: Package
+        shell: C:\mozilla-build\msys2\usr\bin\bash.exe -eo pipefail {0}
+        run: ./mach package
+
+      - name: List packages
+        shell: C:\mozilla-build\msys2\usr\bin\bash.exe -eo pipefail {0}
+        run: ls -lh objdir-opt/dist/ && df -h
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-windows-${{ runner.arch }}
+          path: objdir-opt/dist/firefox-*.zip
+          if-no-files-found: error

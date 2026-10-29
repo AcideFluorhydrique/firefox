@@ -1,0 +1,138 @@
+name: Build Gecko iOS (GeckoTestBrowser)
+
+# 注意：這是主 repo 裡 mobile/ios 的「Gecko 引擎 iOS 移植原型」，
+# 外殼是 Mozilla 內部測試用的極簡瀏覽器 GeckoTestBrowser，不是 App Store 上的 Firefox iOS。
+# 官方流程（mobile/ios/README）：
+#   1. mozconfig 設 --enable-project=mobile/ios，用 ./mach build 編出 Gecko (XUL)
+#   2. 用 Xcode 打開 mobile/ios/GeckoTestBrowser/GeckoTestBrowser.xcodeproj 打包成 App
+# iOS 沒有 artifact build，第 1 步是完整編譯整個 Gecko。
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "目標"
+        required: true
+        default: "simulator"
+        type: choice
+        options:
+          - simulator   # aarch64-apple-ios-sim，可在 Apple Silicon Mac 的模擬器上跑
+          - device      # aarch64-apple-ios，實機（未簽名）
+
+jobs:
+  build:
+    runs-on: macos-latest   # 必須是 Apple Silicon，模擬器版才是 arm64
+    timeout-minutes: 360
+
+    env:
+      MOZCONFIG: ${{ github.workspace }}/../mozconfig-ci
+      RUST_TARGET: ${{ inputs.target == 'simulator' && 'aarch64-apple-ios-sim' || 'aarch64-apple-ios' }}
+      XCODE_SDK: ${{ inputs.target == 'simulator' && 'iphonesimulator' || 'iphoneos' }}
+      XCODE_DEST: ${{ inputs.target == 'simulator' && 'generic/platform=iOS Simulator' || 'generic/platform=iOS' }}
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf ~/Library/Android /usr/local/share/dotnet ~/.dotnet \
+                      ~/Library/Developer/CoreSimulator/Caches || true
+          xcrun simctl delete all || true
+          CURRENT_XCODE=$(xcode-select -p | sed 's|/Contents/Developer||')
+          for x in /Applications/Xcode*.app; do
+            if [ "$x" != "$CURRENT_XCODE" ] && [ ! -L "$x" ]; then sudo rm -rf "$x"; fi
+          done
+          xcodebuild -version
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Cache ~/.mozbuild (toolchains)
+        uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-ios-${{ hashFiles('python/mozboot/**') }}
+          restore-keys: |
+            mozbuild-ios-
+
+      # 參考 mobile/ios/config/mozconfigs/ios/opt，去掉 CI 專用的 clang-plugin 和 cache 設定
+      - name: Write mozconfig
+        run: |
+          cat > "$MOZCONFIG" <<EOF
+          ac_add_options --enable-project=mobile/ios
+          ac_add_options --target=${RUST_TARGET}
+          ac_add_options --disable-debug-symbols
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objdir-ios
+          EOF
+          cat "$MOZCONFIG"
+
+      # mach bootstrap 沒有 iOS 專用選項，用桌面版的選項裝好 clang / rust / node 等工具鏈，
+      # 再手動補上 Rust 的 iOS target
+      - name: Bootstrap
+        run: |
+          ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add "$RUST_TARGET"
+
+      - name: Build Gecko
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./mach build
+
+      # AddGecko.sh 會用 Xcode 的簽名身分去 codesign Gecko 的 dylib；
+      # 我們關掉簽名後那個變數是空的，改成退回 ad-hoc 簽名 ("-")
+      - name: Patch AddGecko.sh for unsigned builds
+        run: |
+          sed -i '' 's/--sign "\${EXPANDED_CODE_SIGN_IDENTITY}"/--sign "${EXPANDED_CODE_SIGN_IDENTITY:--}"/' \
+            mobile/ios/GeckoTestBrowser/GeckoView/AddGecko.sh
+          grep -n 'codesign' mobile/ios/GeckoTestBrowser/GeckoView/AddGecko.sh
+
+      - name: Build GeckoTestBrowser (Xcode)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project mobile/ios/GeckoTestBrowser/GeckoTestBrowser.xcodeproj \
+            -scheme GeckoTestBrowser \
+            -configuration Debug \
+            -sdk "$XCODE_SDK" \
+            -destination "$XCODE_DEST" \
+            -derivedDataPath xcbuild \
+            ARCHS=arm64 \
+            GECKO_TOPOBJDIR="$GITHUB_WORKSPACE/objdir-ios" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build 2>&1 | tee xcodebuild.log | grep -E 'error:|\*\* BUILD' || true
+          test ${PIPESTATUS[0]} -eq 0
+
+      - name: Package
+        run: |
+          mkdir -p out
+          APP=$(find "xcbuild/Build/Products/Debug-$XCODE_SDK" -maxdepth 1 -name 'GeckoTestBrowser.app' | head -n1)
+          echo "App: $APP"
+          du -sh "$APP"
+          if [ "$XCODE_SDK" = "iphonesimulator" ]; then
+            ditto -c -k --keepParent "$APP" out/GeckoTestBrowser-simulator.zip
+          else
+            mkdir -p Payload
+            cp -R "$APP" Payload/
+            zip -qry out/GeckoTestBrowser-unsigned.ipa Payload
+          fi
+          ls -lh out
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: gecko-ios-${{ inputs.target }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Upload xcodebuild log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log-${{ inputs.target }}
+          path: xcodebuild.log
+          if-no-files-found: ignore

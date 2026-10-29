@@ -1,0 +1,75 @@
+name: Build Firefox macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner / CPU 架構"
+        required: true
+        default: "macos-latest"
+        type: choice
+        options:
+          - macos-latest     # Apple Silicon (arm64)
+          - macos-15-intel   # Intel (x86_64)
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+
+    env:
+      MOZCONFIG: ${{ github.workspace }}/../mozconfig-ci
+
+    steps:
+      # macOS runner 硬碟很小：清掉 Android SDK、.NET、模擬器和多餘的 Xcode
+      - name: Free disk space
+        run: |
+          sudo rm -rf ~/Library/Android /usr/local/share/dotnet ~/.dotnet \
+                      ~/Library/Developer/CoreSimulator/Caches || true
+          xcrun simctl delete all || true
+          CURRENT_XCODE=$(xcode-select -p | sed 's|/Contents/Developer||')
+          for x in /Applications/Xcode*.app; do
+            if [ "$x" != "$CURRENT_XCODE" ] && [ ! -L "$x" ]; then sudo rm -rf "$x"; fi
+          done
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Cache ~/.mozbuild (toolchains, macOS SDK)
+        uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-macos-${{ runner.arch }}-${{ hashFiles('python/mozboot/**') }}
+          restore-keys: |
+            mozbuild-macos-${{ runner.arch }}-
+
+      - name: Write mozconfig
+        run: |
+          cat > "$MOZCONFIG" <<'EOF'
+          ac_add_options --enable-project=browser
+          ac_add_options --disable-debug-symbols
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objdir-opt
+          EOF
+          cat "$MOZCONFIG"
+
+      - name: Bootstrap
+        run: ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+
+      - name: Build
+        run: ./mach build
+
+      - name: Package
+        run: ./mach package
+
+      - name: List packages
+        run: ls -lh objdir-opt/dist/ && df -h
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-macos-${{ runner.arch }}
+          path: objdir-opt/dist/*.dmg
+          if-no-files-found: error
