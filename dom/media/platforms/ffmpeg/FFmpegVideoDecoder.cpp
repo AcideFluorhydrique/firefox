@@ -32,9 +32,9 @@
 #endif
 
 #include <algorithm>
+#include <memory>
 
 #include "mozilla/ToString.h"
-#include "mozilla/UniquePtr.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/layers/KnowsCompositor.h"
 #include "nsPrintfCString.h"
@@ -756,9 +756,10 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::InitVulkanDecoder() {
     return NS_ERROR_DOM_MEDIA_FATAL_ERR;
   }
 
-  mVulkanDecoder.CheckDecodeCapabilities(mCodecID, mVulkanDeviceContext,
-                                         mInfo.mExtraData, mInfo.mColorDepth);
-  if (!mVulkanDecoder.VulkanCanDecodeFormat(mCodecID,
+  if (!mVulkanDecoder.CheckDecodeCapabilities(mCodecID, mVulkanDeviceContext,
+                                              mInfo.mExtraData,
+                                              mInfo.mColorDepth) ||
+      !mVulkanDecoder.VulkanCanDecodeFormat(mCodecID,
                                             mLib->avcodec_version())) {
     return NS_ERROR_NOT_AVAILABLE;
   }
@@ -904,6 +905,10 @@ bool FFmpegVideoDecoder<LIBAV_VER>::ShouldDisableHWDecoding(
     return false;
   }
 #    endif
+  if (ShouldDecodeInGPUProcess()) {
+    FFMPEG_LOG("Platform decoder must be used in the GPU process");
+    return true;
+  }
   switch (mCodecID) {
     case AV_CODEC_ID_H264:
     case AV_CODEC_ID_HEVC:
@@ -2177,7 +2182,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageVAAPI(
     AVHWFramesContext* context =
         (AVHWFramesContext*)mCodecContext->hw_frames_ctx->data;
     mVideoFramePool =
-        MakeUnique<VideoFramePool<LIBAV_VER>>(context->initial_pool_size);
+        std::make_unique<VideoFramePool<LIBAV_VER>>(context->initial_pool_size);
   }
   auto surface = mVideoFramePool->GetVideoFrameSurface(
       vaDesc, mFrame->width, mFrame->height, mCodecContext, mFrame, mLib);
@@ -2330,7 +2335,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageVulkan(
     AVHWFramesContext* context =
         (AVHWFramesContext*)mCodecContext->hw_frames_ctx->data;
     mVideoFramePool =
-        MakeUnique<VideoFramePool<LIBAV_VER>>(context->initial_pool_size);
+        std::make_unique<VideoFramePool<LIBAV_VER>>(context->initial_pool_size);
   }
 
   int32_t vulkanCopyBufIdx = -1;
@@ -2465,7 +2470,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageV4L2(
     // But, this value is only used for deciding when we are running out of
     // free buffers and so should start copying them.  So a rough estimate
     // is sufficient, and the codec defaults to 20 capture buffers.
-    mVideoFramePool = MakeUnique<VideoFramePool<LIBAV_VER>>(20);
+    mVideoFramePool = std::make_unique<VideoFramePool<LIBAV_VER>>(20);
   }
 
   auto surface = mVideoFramePool->GetVideoFrameSurface(
@@ -2562,6 +2567,11 @@ bool FFmpegVideoDecoder<LIBAV_VER>::MediaCodecSupportsColorDepth(
               media::MCSInfo::GetMediaCodecFromMimeType(aMimeType), support,
               aColorDepth)
               .isEmpty();
+}
+
+/* static */ bool FFmpegVideoDecoder<LIBAV_VER>::ShouldDecodeInGPUProcess() {
+  return XRE_IsRDDProcess() && StaticPrefs::media_gpu_process_decoder() &&
+         gfx::gfxVars::GPUProcessEnabled();
 }
 #endif
 
@@ -3114,6 +3124,16 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::AllocateHEVCExtraData() {
 }
 #  endif
 
+static void MediaCodecNativeWindowReleaseCallback(
+    struct AVHWDeviceContext* hwctx) {
+  auto* mediacodecctx = static_cast<AVMediaCodecDeviceContext*>(hwctx->hwctx);
+  if (mediacodecctx->native_window) {
+    ANativeWindow_release(
+        static_cast<ANativeWindow*>(mediacodecctx->native_window));
+    mediacodecctx->native_window = nullptr;
+  }
+}
+
 MediaResult FFmpegVideoDecoder<LIBAV_VER>::InitMediaCodecDecoder() {
   FFMPEG_LOG("Initialising MediaCodec FFmpeg decoder");
   StaticMutexAutoLock mon(sMutex);
@@ -3170,6 +3190,9 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::InitMediaCodecDecoder() {
   AVHWDeviceContext* hwctx = (AVHWDeviceContext*)mMediaCodecDeviceContext->data;
   AVMediaCodecDeviceContext* mediacodecctx =
       (AVMediaCodecDeviceContext*)hwctx->hwctx;
+  // FFmpeg only releases native_window if it created it, so we must release
+  // the reference we hand to it when the device context is destroyed.
+  hwctx->free = MediaCodecNativeWindowReleaseCallback;
 
   if (XRE_IsGPUProcess() && gfx::gfxVars::ForceAImageReaderAndroid()) {
     MOZ_ASSERT(!mAndroidImageReader);
@@ -3199,8 +3222,8 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::InitMediaCodecDecoder() {
     }
 
     mediacodecctx->surface = mImageReaderSurface.Get();
-    // Acquire a reference on the ANativeWindow.
-    // ANativeWindow_release() will be called on uninit the native_window.
+    // Acquire a reference on the ANativeWindow. It is released by
+    // MediaCodecNativeWindowReleaseCallback.
     ANativeWindow_acquire(window);
     mediacodecctx->native_window = window;
     mediacodecctx->create_window = 0;  // default -- useful when encoding?
@@ -3288,14 +3311,10 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageMediaCodec(
         return false;
       }
 
-      if (mDecoder->ReleaseFrameMediaCodec(this, aRender)) {
-        mDecoder->QueueResumeDrain();
-        // Ensure we don't release the same frame multiple times
-        mDecoder = nullptr;
-        return true;
-      }
+      const bool success = mDecoder->ReleaseFrameMediaCodec(this, aRender);
+      // Ensure we don't release the same frame multiple times.
       mDecoder = nullptr;
-      return false;
+      return success;
     }
 
     RefPtr<FFmpegVideoDecoder<LIBAV_VER>> mDecoder;
@@ -3303,7 +3322,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageMediaCodec(
 
   RefPtr<layers::Image> img;
   if (mAndroidImageReader) {
-    auto listener = MakeUnique<CompositeListener>(this);
+    auto listener = std::make_unique<CompositeListener>(this);
     mFrameMap.Insert(listener.get(), frame);
     auto readerImage = MakeRefPtr<layers::AndroidImageReaderImage>(
         mAndroidImageReader->mImageReaderId,
@@ -3317,7 +3336,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageMediaCodec(
         false /* NOT continuous */, gl::OriginPos::BottomLeft, mInfo.HasAlpha(),
         false /* force color space stuff */,
         /* aTransformOverride */ Nothing());
-    auto listener = MakeUnique<CompositeListener>(this);
+    auto listener = std::make_unique<CompositeListener>(this);
     mFrameMap.Insert(listener.get(), frame);
     img->AsSurfaceTextureImage()->RegisterSetCurrentCallback(
         std::move(listener));
@@ -3339,17 +3358,31 @@ bool FFmpegVideoDecoder<LIBAV_VER>::ReleaseFrameMediaCodec(void* aKey,
   // ensure that the underlying AMediaCodec decoder is not flushed or stopped on
   // the task queue while we are in the middle of releasing on the
   // MediaSupervisor thread.
-  return mFrameMap.Take(aKey, [&](AVFrame* aFrame) {
+  bool success = true;
+  bool hasCodecBuffer = false;
+  const bool released = mFrameMap.Take(aKey, [&](AVFrame* aFrame) {
     FFMPEG_LOG("Release MediaCodec frame {}, render={}", fmt::ptr(aFrame),
                aRender);
     for (int i = 0; i < AV_NUM_DATA_POINTERS; ++i) {
       if (aFrame->data[i]) {
-        mLib->av_mediacodec_release_buffer((AVMediaCodecBuffer*)aFrame->data[i],
-                                           aRender ? 1 : 0);
+        hasCodecBuffer = true;
+        const int rv = mLib->av_mediacodec_release_buffer(
+            (AVMediaCodecBuffer*)aFrame->data[i], aRender ? 1 : 0);
+        if (rv < 0) {
+          FFMPEG_LOG("Failed to release MediaCodec frame {}, render={}, rv={}",
+                     fmt::ptr(aFrame), aRender, rv);
+          success = false;
+        }
       }
     }
     mLib->av_frame_free(&aFrame);
   });
+  if (released) {
+    // A frame was removed even if rendering failed. Resume draining after
+    // dropping the map lock, without reporting a successful image submission.
+    QueueResumeDrain();
+  }
+  return released && hasCodecBuffer && success;
 }
 
 void FFmpegVideoDecoder<LIBAV_VER>::ReleaseSurfaceMediaCodec() {

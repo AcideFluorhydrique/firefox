@@ -210,6 +210,7 @@ export const WEATHER_OPTIN_REGIONS = [
   "DE", // Germany
   "GB", // United Kingdom
   "GR", // Greece
+  "GL", // Greenland
   "HU", // Hungary
   "IS", // Iceland
   "IE", // Ireland
@@ -217,6 +218,7 @@ export const WEATHER_OPTIN_REGIONS = [
   "LV", // Latvia
   "LI", // Liechtenstein
   "LT", // Lithuania
+  "LU", // Luxembourg
   "MT", // Malta
   "NL", // Netherlands
   "NO", // Norway
@@ -926,7 +928,7 @@ export const PREFS_CONFIG = new Map([
     {
       title:
         "Whether the Picture of the day 'Set as wallpaper' feature/CTA is enabled",
-      value: false,
+      value: true,
     },
   ],
   [

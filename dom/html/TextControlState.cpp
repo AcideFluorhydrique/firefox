@@ -898,7 +898,7 @@ TextInputListener::HandleEvent(Event* aEvent) {
 
     RefPtr<nsAtom> eventTypeAtom =
         ShortcutKeys::ConvertEventToDOMEventType(widgetKeyEvent);
-    for (KeyEventHandler* handler = keyHandlers; handler;
+    for (RefPtr<KeyEventHandler> handler = keyHandlers; handler;
          handler = handler->GetNextHandler()) {
       if (!handler->EventTypeEquals(eventTypeAtom)) {
         continue;
@@ -1469,7 +1469,6 @@ nsresult TextControlState::InitializeSelection(PresShell* aPresShell) {
 
   // Create a SelectionController
   mSelCon = new TextInputSelectionController(aPresShell, *editorRoot);
-  EnsureTextInputListener();
 
   // Editor will override this as needed from InitializeSelection.
   mSelCon->SetDisplaySelection(nsISelectionController::SELECTION_HIDDEN);
@@ -1484,7 +1483,6 @@ nsresult TextControlState::InitializeSelection(PresShell* aPresShell) {
     if (caret) {
       selection->AddSelectionListener(caret);
     }
-    mTextInputListener->StartToListenToSelectionChange();
   }
 
   // If an editor exists from before, prepare it for usage
@@ -1538,7 +1536,6 @@ void TextControlState::EnsureTextInputListener() {
       mTextEditor->SetTextInputListener(mTextInputListener);
     }
   }
-  mTextInputListener->StartToHandleShortcutKeys();
 }
 
 bool TextControlState::IsPreparingEditor() const {
@@ -1640,7 +1637,7 @@ nsresult TextControlState::PrepareEditor() {
       if (mPasswordMaskData) {
         passwordMaskData = std::move(mPasswordMaskData);
       } else {
-        passwordMaskData = MakeUnique<PasswordMaskData>();
+        passwordMaskData = std::make_unique<PasswordMaskData>();
       }
     } else {
       mPasswordMaskData = nullptr;
@@ -1761,7 +1758,14 @@ nsresult TextControlState::PrepareEditor() {
   NS_WARNING_ASSERTION(enabledUndoRedo,
                        "Failed to enable undo/redo transaction");
 
+  // The listener only acts on notifications from the editor and on keyboard
+  // events. Text controls prepare the editor in GetEventTargetParent(), which
+  // runs before any listener sees a keyboard event, so creating the listener
+  // can wait until now. This registers our keyboard listeners before the
+  // editor's own, which PostCreate() adds.
   EnsureTextInputListener();
+  mTextInputListener->StartToListenToSelectionChange();
+  mTextInputListener->StartToHandleShortcutKeys();
 
   if (!mEditorInitialized) {
     newTextEditor->PostCreate();

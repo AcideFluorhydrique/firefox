@@ -3501,6 +3501,12 @@ nsChangeHint Element::GetAttributeChangeHint(const nsAtom* aAttribute,
   return nsChangeHint(0);
 }
 
+void Element::DoScheduleForPresAttrEvaluation() {
+  MOZ_ASSERT(IsPendingMappedAttributeEvaluation());
+  MOZ_ASSERT(IsInComposedDoc());
+  OwnerDoc()->ScheduleForPresAttrEvaluation(this);
+}
+
 void Element::SetMappedDeclarationBlock(
     already_AddRefed<StyleLockedDeclarationBlock> aDeclarations) {
   MOZ_ASSERT(IsPendingMappedAttributeEvaluation());
@@ -4170,12 +4176,8 @@ nsresult Element::SetAttrAndNotify(
     MOZ_TRY(SetAndSwapAttr(ni, aParsedValue, &oldValueSet, aIsKnownNew));
   }
 
-  if (IsAttrMapped(aNamespaceID, aName) &&
-      !IsPendingMappedAttributeEvaluation()) {
-    mAttrs.InfallibleMarkAsPendingPresAttributeEvaluation();
-    if (Document* doc = GetComposedDoc()) {
-      doc->ScheduleForPresAttrEvaluation(this);
-    }
+  if (IsAttrMapped(aNamespaceID, aName)) {
+    ScheduleForPresAttrEvaluationIfNeeded();
   }
 
   // If the old value owns its own data, we know it is OK to keep using it.
@@ -4556,12 +4558,8 @@ nsresult Element::UnsetAttr(int32_t aNameSpaceID, nsAtom* aName, bool aNotify) {
     hadDirAuto = HasDirAuto();  // already takes bdi into account
   }
 
-  if (IsAttrMapped(aNameSpaceID, aName) &&
-      !IsPendingMappedAttributeEvaluation()) {
-    mAttrs.InfallibleMarkAsPendingPresAttributeEvaluation();
-    if (Document* doc = GetComposedDoc()) {
-      doc->ScheduleForPresAttrEvaluation(this);
-    }
+  if (IsAttrMapped(aNameSpaceID, aName)) {
+    ScheduleForPresAttrEvaluationIfNeeded();
   }
 
   nsAttrValue oldValue;
@@ -5085,7 +5083,7 @@ nsresult Element::CopyInnerTo(Element* aDst) {
   // that CloneAndAdopt can use it for definition lookup.
   if (CustomElementData* data = GetCustomElementData()) {
     if (nsAtom* typeAtom = data->GetCustomElementType()) {
-      aDst->SetCustomElementData(MakeUnique<CustomElementData>(typeAtom));
+      aDst->SetCustomElementData(std::make_unique<CustomElementData>(typeAtom));
     }
   }
 
@@ -6180,7 +6178,9 @@ void Element::ClearServoData(Document* aDoc) {
   if (HasServoData()) {
     Servo_Element_ClearData(this);
   } else {
-    UnsetFlags(kAllServoDescendantBits | NODE_NEEDS_FRAME);
+    // NOTE: Matches the flags cleared in GeckoElement::clear_data.
+    UnsetFlags(ELEMENT_HAS_SNAPSHOT | ELEMENT_HANDLED_SNAPSHOT |
+               kAllServoDescendantBits | NODE_NEEDS_FRAME);
   }
   // Since this element is losing its servo data, nothing under it may have
   // servo data either, so we can forget restyles rooted at this element. This
@@ -6253,14 +6253,14 @@ ElementAnimationData& Element::CreateAnimationData() {
   MOZ_ASSERT(!GetAnimationData());
   SetMayHaveAnimations();
   auto* slots = ExtendedDOMSlots();
-  slots->mAnimations = MakeUnique<ElementAnimationData>();
+  slots->mAnimations = std::make_unique<ElementAnimationData>();
   return *slots->mAnimations;
 }
 
 PopoverData& Element::CreatePopoverData() {
   MOZ_ASSERT(!GetPopoverData());
   auto* slots = ExtendedDOMSlots();
-  slots->mPopoverData = MakeUnique<PopoverData>();
+  slots->mPopoverData = std::make_unique<PopoverData>();
   return *slots->mPopoverData;
 }
 

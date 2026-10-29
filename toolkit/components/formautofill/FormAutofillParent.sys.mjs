@@ -47,6 +47,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   FormAutofillPreferences:
     "resource://autofill/FormAutofillPreferences.sys.mjs",
   FormAutofillPrompter: "resource://autofill/FormAutofillPrompter.sys.mjs",
+  MIGRATION_SAFE_POINT_TOPIC: "resource://autofill/FormAutofillStorage.sys.mjs",
   PassportRecord: "resource://gre/modules/shared/PassportRecord.sys.mjs",
   FirefoxRelay: "resource://gre/modules/FirefoxRelay.sys.mjs",
   LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
@@ -804,6 +805,10 @@ export class FormAutofillParent extends JSWindowActorParent {
         await showDoorhanger();
       }
     }
+
+    // The submission's writes, and those of any doorhanger it showed, have
+    // landed by now.
+    Services.obs.notifyObservers(null, lazy.MIGRATION_SAFE_POINT_TOPIC);
   }
 
   /**
@@ -1204,14 +1209,15 @@ export class FormAutofillParent extends JSWindowActorParent {
     this.sendAsyncMessage("FormAutofill:RepopulateAutocompletePopup");
   }
 
-  async #confirmAddressRemoval(guid) {
+  async #confirmAddressRemoval(guid, flowId) {
     // Read before awaiting: the prompt below takes focus and the actor may be
     // destroyed by the time it resolves.
     const chromeWindow = this.manager.browsingContext.topChromeWindow;
 
     const confirmed = await lazy.AutocompleteRemoveRecord.confirmRemoval(
       chromeWindow,
-      "address"
+      "address",
+      flowId
     );
     if (!confirmed) {
       return;
@@ -1221,7 +1227,7 @@ export class FormAutofillParent extends JSWindowActorParent {
     await lazy.gFormAutofillStorage.addresses.remove(guid);
   }
 
-  async #confirmCreditCardRemoval(guid) {
+  async #confirmCreditCardRemoval(guid, flowId) {
     // Read before awaiting: the prompts below take focus and the actor may be
     // destroyed by the time they resolve.
     const chromeWindow = this.manager.browsingContext.topChromeWindow;
@@ -1263,7 +1269,8 @@ export class FormAutofillParent extends JSWindowActorParent {
 
     const confirmed = await lazy.AutocompleteRemoveRecord.confirmRemoval(
       chromeWindow,
-      "payment"
+      "payment",
+      flowId
     );
     if (!confirmed) {
       return;
@@ -1277,7 +1284,7 @@ export class FormAutofillParent extends JSWindowActorParent {
    * This function is called when an autocomplete entry that is provided by
    * formautofill is selected by the user.
    */
-  async onAutoCompleteEntrySelected(message, data) {
+  async onAutoCompleteEntrySelected(message, data, { flowId } = {}) {
     switch (message) {
       case "FormAutofill:OpenPaymentPreferences": {
         lazy.FormAutofillPreferences.openPaymentPreference();
@@ -1301,7 +1308,7 @@ export class FormAutofillParent extends JSWindowActorParent {
 
       case "FormAutofill:DeleteAddress": {
         try {
-          await this.#confirmAddressRemoval(data?.guid);
+          await this.#confirmAddressRemoval(data?.guid, flowId);
         } catch (ex) {
           lazy.log.warn("Address removal flow failed:", ex);
         } finally {
@@ -1312,7 +1319,7 @@ export class FormAutofillParent extends JSWindowActorParent {
 
       case "FormAutofill:DeleteCreditCard": {
         try {
-          await this.#confirmCreditCardRemoval(data?.guid);
+          await this.#confirmCreditCardRemoval(data?.guid, flowId);
         } catch (ex) {
           lazy.log.warn("Payment method removal flow failed:", ex);
         } finally {
@@ -1522,6 +1529,9 @@ export class FormAutofillParent extends JSWindowActorParent {
       value.isFilledOnFieldsUpdate = false;
     });
     section.onFilled(result);
+
+    // A fill writes nothing.
+    Services.obs.notifyObservers(null, lazy.MIGRATION_SAFE_POINT_TOPIC);
 
     // For testing only
     Services.obs.notifyObservers(null, "formautofill-autofill-complete");

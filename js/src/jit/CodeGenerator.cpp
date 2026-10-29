@@ -2305,10 +2305,13 @@ static void UpdateRegExpStatics(MacroAssembler& masm, Register regexp,
   masm.branchPtr(Assembler::Equal, matchesInputAddress, input, &storeLazyState);
 
   masm.bind(&slowPath);
-  masm.guardedCallPreBarrier(lazySourceAddress, MIRType::String);
+  Label skipPreBarriers;
+  masm.branchTestNeedsMarkingBarrier(Assembler::Zero, &skipPreBarriers);
+  masm.unguardedCallPreBarrier(lazySourceAddress, MIRType::String);
+  masm.unguardedCallPreBarrier(pendingInputAddress, MIRType::String);
+  masm.unguardedCallPreBarrier(matchesInputAddress, MIRType::String);
+  masm.bind(&skipPreBarriers);
   masm.storePtr(temp2, lazySourceAddress);
-  masm.guardedCallPreBarrier(pendingInputAddress, MIRType::String);
-  masm.guardedCallPreBarrier(matchesInputAddress, MIRType::String);
 
   if (initialStringHeap == gc::Heap::Default) {
     // Writing into RegExpStatics tenured memory; must post-barrier.
@@ -3514,16 +3517,6 @@ void CodeGenerator::visitRegExpSearcher(LRegExpSearcher* lir) {
     Register input = ToRegister(lir->string());
     Register regexp = ToRegister(lir->regexp());
 
-    AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
-    regs.take(lastIndex);
-    regs.take(input);
-    regs.take(regexp);
-    Register temp = regs.takeAny();
-
-    masm.computeEffectiveAddress(
-        Address(masm.getStackPointer(), InputOutputDataSize), temp);
-
-    pushArg(temp);
     pushArg(lastIndex);
     pushArg(input);
     pushArg(regexp);
@@ -3531,7 +3524,7 @@ void CodeGenerator::visitRegExpSearcher(LRegExpSearcher* lir) {
     // We are not using oolCallVM because we are in a Call, and that live
     // registers are already saved by the the register allocator.
     using Fn = bool (*)(JSContext* cx, HandleObject regexp, HandleString input,
-                        int32_t lastIndex, MatchPairs* pairs, int32_t* result);
+                        int32_t lastIndex, int32_t* result);
     callVM<Fn, RegExpSearcherRaw>(lir);
 
     masm.jump(ool.rejoin());
@@ -4433,7 +4426,7 @@ void CodeGenerator::visitStoreDynamicSlotT(LStoreDynamicSlotT* lir) {
   Address dest(base, offset);
 
   if (lir->mir()->needsPreBarrier()) {
-    emitPreBarrier(dest);
+    emitPreBarrier(lir->mir(), dest);
   }
 
   MIRType valueType = lir->mir()->value()->type();
@@ -4448,7 +4441,7 @@ void CodeGenerator::visitStoreDynamicSlotV(LStoreDynamicSlotV* lir) {
   ValueOperand value = ToValue(lir->value());
 
   if (lir->mir()->needsPreBarrier()) {
-    emitPreBarrier(Address(base, offset));
+    emitPreBarrier(lir->mir(), Address(base, offset));
   }
 
   masm.storeValue(value, Address(base, offset));
@@ -4466,7 +4459,7 @@ void CodeGenerator::visitStoreDynamicSlotFromOffsetV(
 
   Address address(temp, 0);
 
-  emitPreBarrier(address);
+  emitPreBarrier(lir->mir(), address);
 
   // obj->slots[offset]
   masm.storeValue(value, address);
@@ -4485,7 +4478,7 @@ void CodeGenerator::visitStoreDynamicSlotFromOffsetT(
 
   Address address(temp, 0);
 
-  emitPreBarrier(address);
+  emitPreBarrier(lir->mir(), address);
 
   // obj->slots[offset]
   ConstantOrRegister nvalue =
@@ -5948,6 +5941,19 @@ static void EmitPostWriteBarrier(MacroAssembler& masm, CompileRuntime* runtime,
   }
 
   masm.bind(&exit);
+}
+
+template <typename... Addrs>
+void CodeGenerator::emitPreBarrier(const MInstruction* mir,
+                                   const Addrs&... addresses) {
+  auto* ool = new (alloc())
+      LambdaOutOfLineCode([this, addresses...](OutOfLineCode& ool) {
+        (masm.unguardedCallPreBarrier(addresses, MIRType::Value), ...);
+        masm.jump(ool.rejoin());
+      });
+  addOutOfLineCode(ool, mir);
+  masm.branchTestNeedsMarkingBarrier(Assembler::NonZero, ool->entry());
+  masm.bind(ool->rejoin());
 }
 
 void CodeGenerator::emitPostWriteBarrier(const LAllocation* obj) {
@@ -10061,7 +10067,7 @@ void CodeGenerator::visitSetArgumentsObjectArg(LSetArgumentsObjectArg* lir) {
                    temp);
   Address argAddr(temp, ArgumentsData::offsetOfArgs() +
                             lir->mir()->argno() * sizeof(Value));
-  emitPreBarrier(argAddr);
+  emitPreBarrier(lir->mir(), argAddr);
   MIRType valueType = lir->mir()->value()->type();
   MOZ_RELEASE_ASSERT(!IsMagicType(valueType));
   if (valueType == MIRType::Value) {
@@ -10383,7 +10389,8 @@ static void TableIteratorFinish(MacroAssembler& masm, Register iter,
 }
 
 template <>
-void CodeGenerator::emitLoadIteratorValues<MapObject>(Register result,
+void CodeGenerator::emitLoadIteratorValues<MapObject>(const MInstruction* mir,
+                                                      Register result,
                                                       Register temp,
                                                       Register front) {
   size_t elementsOffset = NativeObject::offsetOfFixedElements();
@@ -10392,8 +10399,7 @@ void CodeGenerator::emitLoadIteratorValues<MapObject>(Register result,
   Address valueAddress(front, MapObject::Table::Entry::offsetOfValue());
   Address keyElemAddress(result, elementsOffset);
   Address valueElemAddress(result, elementsOffset + sizeof(Value));
-  masm.guardedCallPreBarrier(keyElemAddress, MIRType::Value);
-  masm.guardedCallPreBarrier(valueElemAddress, MIRType::Value);
+  emitPreBarrier(mir, keyElemAddress, valueElemAddress);
   masm.storeValue(keyAddress, keyElemAddress, temp);
   masm.storeValue(valueAddress, valueElemAddress, temp);
 
@@ -10412,14 +10418,15 @@ void CodeGenerator::emitLoadIteratorValues<MapObject>(Register result,
 }
 
 template <>
-void CodeGenerator::emitLoadIteratorValues<SetObject>(Register result,
+void CodeGenerator::emitLoadIteratorValues<SetObject>(const MInstruction* mir,
+                                                      Register result,
                                                       Register temp,
                                                       Register front) {
   size_t elementsOffset = NativeObject::offsetOfFixedElements();
 
   Address keyAddress(front, SetObject::Table::offsetOfEntryKey());
   Address keyElemAddress(result, elementsOffset);
-  masm.guardedCallPreBarrier(keyElemAddress, MIRType::Value);
+  emitPreBarrier(mir, keyElemAddress);
   masm.storeValue(keyAddress, keyElemAddress, temp);
 
   Label skipBarrier;
@@ -10471,7 +10478,7 @@ void CodeGenerator::emitGetNextEntryForIterator(LGetNextEntryForIterator* lir) {
   {
     TableIteratorLoadEntry<TableObject>(masm, iter, temp, front);
 
-    emitLoadIteratorValues<TableObject>(result, temp, front);
+    emitLoadIteratorValues<TableObject>(lir->mir(), result, temp, front);
 
     TableIteratorAdvance<TableObject>(masm, iter, front, dataLength, temp);
 
@@ -16020,7 +16027,7 @@ void CodeGenerator::visitStoreElementT(LStoreElementT* store) {
 
   dest.match([&](const auto& dest) {
     if (store->mir()->needsPreBarrier()) {
-      emitPreBarrier(dest);
+      emitPreBarrier(store->mir(), dest);
     }
 
     if (store->mir()->needsHoleCheck()) {
@@ -16040,7 +16047,7 @@ void CodeGenerator::visitStoreElementV(LStoreElementV* lir) {
 
   dest.match([&](const auto& dest) {
     if (lir->mir()->needsPreBarrier()) {
-      emitPreBarrier(dest);
+      emitPreBarrier(lir->mir(), dest);
     }
 
     if (lir->mir()->needsHoleCheck()) {
@@ -16083,7 +16090,7 @@ void CodeGenerator::visitStoreElementHoleT(LStoreElementHoleT* lir) {
   Address initLength(elements, ObjectElements::offsetOfInitializedLength());
   masm.spectreBoundsCheck32(index, initLength, temp, ool->entry());
 
-  emitPreBarrier(BaseObjectElementIndex(elements, index));
+  emitPreBarrier(lir->mir(), BaseObjectElementIndex(elements, index));
 
   masm.bind(ool->rejoin());
 
@@ -16122,7 +16129,7 @@ void CodeGenerator::visitStoreElementHoleV(LStoreElementHoleV* lir) {
   Address initLength(elements, ObjectElements::offsetOfInitializedLength());
   masm.spectreBoundsCheck32(index, initLength, temp, ool->entry());
 
-  emitPreBarrier(BaseObjectElementIndex(elements, index));
+  emitPreBarrier(lir->mir(), BaseObjectElementIndex(elements, index));
 
   masm.bind(ool->rejoin());
   masm.storeValue(value, BaseObjectElementIndex(elements, index));
@@ -18129,7 +18136,7 @@ void CodeGenerator::visitStoreFixedSlotFromOffsetV(
 
   Address slot(temp, 0);
   if (lir->mir()->needsPreBarrier()) {
-    emitPreBarrier(slot);
+    emitPreBarrier(lir->mir(), slot);
   }
 
   // obj[offset]
@@ -18149,7 +18156,7 @@ void CodeGenerator::visitStoreFixedSlotFromOffsetT(
 
   Address slot(temp, 0);
   if (lir->mir()->needsPreBarrier()) {
-    emitPreBarrier(slot);
+    emitPreBarrier(lir->mir(), slot);
   }
 
   // obj[offset]
@@ -18288,7 +18295,7 @@ void CodeGenerator::emitMaybeAtomizeSlot(LInstruction* ins, Register stringReg,
       MOZ_ASSERT(dest.typedReg().gpr() == stringReg);
     }
 
-    emitPreBarrier(slotAddr);
+    masm.guardedCallPreBarrier(slotAddr, MIRType::Value);
     masm.storeTypedOrValue(dest, slotAddr);
 
     // We don't need a post-barrier because atoms aren't nursery-allocated.
@@ -18328,7 +18335,7 @@ void CodeGenerator::emitMaybeAtomizeSlot(LInstruction* ins, Register stringReg,
     MOZ_ASSERT(dest.typedReg().gpr() == stringReg);
   }
 
-  emitPreBarrier(slotAddr);
+  emitPreBarrier(ins->mirRaw()->toInstruction(), slotAddr);
   masm.storeTypedOrValue(dest, slotAddr);
 
   masm.bind(ool->rejoin());
@@ -18522,7 +18529,7 @@ void CodeGenerator::visitStoreFixedSlotV(LStoreFixedSlotV* ins) {
 
   Address address(obj, NativeObject::getFixedSlotOffset(slot));
   if (ins->mir()->needsPreBarrier()) {
-    emitPreBarrier(address);
+    emitPreBarrier(ins->mir(), address);
   }
 
   masm.storeValue(value, address);
@@ -18537,7 +18544,7 @@ void CodeGenerator::visitStoreFixedSlotT(LStoreFixedSlotT* ins) {
 
   Address address(obj, NativeObject::getFixedSlotOffset(slot));
   if (ins->mir()->needsPreBarrier()) {
-    emitPreBarrier(address);
+    emitPreBarrier(ins->mir(), address);
   }
 
   ConstantOrRegister nvalue =
@@ -18939,7 +18946,8 @@ void CodeGenerator::visitLoadSlotByIteratorIndexIndexed(
   visitLoadSlotByIteratorIndexCommon(object, indexScratch, kindScratch, result);
 }
 
-void CodeGenerator::visitStoreSlotByIteratorIndexCommon(Register object,
+void CodeGenerator::visitStoreSlotByIteratorIndexCommon(const MInstruction* mir,
+                                                        Register object,
                                                         Register indexScratch,
                                                         Register kindScratch,
                                                         ValueOperand value) {
@@ -18982,7 +18990,7 @@ void CodeGenerator::visitStoreSlotByIteratorIndexCommon(Register object,
 
   masm.bind(&doStore);
   Address storeAddress(indexScratch, 0);
-  emitPreBarrier(storeAddress);
+  emitPreBarrier(mir, storeAddress);
   masm.storeValue(value, storeAddress);
 
   masm.branchValueIsNurseryCell(Assembler::NotEqual, value, kindScratch, &done);
@@ -19006,7 +19014,8 @@ void CodeGenerator::visitStoreSlotByIteratorIndex(
   masm.extractCurrentIndexAndKindFromIterator(iterator, indexScratch,
                                               kindScratch);
 
-  visitStoreSlotByIteratorIndexCommon(object, indexScratch, kindScratch, value);
+  visitStoreSlotByIteratorIndexCommon(lir->mir(), object, indexScratch,
+                                      kindScratch, value);
 }
 
 void CodeGenerator::visitStoreSlotByIteratorIndexIndexed(
@@ -19021,7 +19030,8 @@ void CodeGenerator::visitStoreSlotByIteratorIndexIndexed(
   masm.extractIndexAndKindFromIteratorByIterIndex(iterator, index, kindScratch,
                                                   indexScratch);
 
-  visitStoreSlotByIteratorIndexCommon(object, indexScratch, kindScratch, value);
+  visitStoreSlotByIteratorIndexCommon(lir->mir(), object, indexScratch,
+                                      kindScratch, value);
 }
 
 void CodeGenerator::visitSetPropertyCache(LSetPropertyCache* ins) {
@@ -22462,7 +22472,7 @@ void CodeGenerator::visitInitHomeObject(LInitHomeObject* lir) {
 
   Address addr(func, FunctionExtended::offsetOfMethodHomeObjectSlot());
 
-  emitPreBarrier(addr);
+  emitPreBarrier(lir->mir(), addr);
   masm.storeValue(homeObject, addr);
 }
 
@@ -23743,7 +23753,7 @@ void CodeGenerator::visitTakeDisposeCapability(LTakeDisposeCapability* lir) {
 
   Address capabilityAddr(
       environment, DisposableEnvironmentObject::offsetOfDisposeCapability());
-  emitPreBarrier(capabilityAddr);
+  emitPreBarrier(lir->mir(), capabilityAddr);
   masm.loadValue(capabilityAddr, output);
   masm.storeValue(JS::UndefinedValue(), capabilityAddr);
 }

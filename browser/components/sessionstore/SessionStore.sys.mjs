@@ -666,6 +666,9 @@ class _SessionStore {
   // decides to later open a non-private window as well.
   #deferredInitialState = null;
 
+  // Whether startup_session_outcome has been recorded yet.
+  #sessionOutcomeRecorded = false;
+
   // Keeps track of whether a notification needs to be sent that closed objects have changed.
   #closedObjectsChanged = false;
 
@@ -817,10 +820,9 @@ class _SessionStore {
           if (ss.sessionType == ss.DEFER_SESSION) {
             let [iniState, remainingState] =
               this.#prepDataForDeferredRestore(state);
-            // Should null out state when iniState carries nothing to restore
-            // now, but savedGroups is always an array, so this is always true
-            // and the else never runs. TODO (Bug 2076441).
-            if (iniState.windows.length || iniState.savedGroups) {
+            // iniState carries windows with pinned tabs to open or closed tabs
+            // and groups to carry over, and/or saved groups to preserve.
+            if (iniState.windows.length || iniState.savedGroups.length) {
               state = iniState;
             } else {
               state = null;
@@ -1027,6 +1029,27 @@ class _SessionStore {
 
     Glean.sessionRestore.startupSessionDecision.record(extra);
     this.#log.debug("Session decision", extra);
+  }
+
+  /**
+   * Report what came of the restore decision reported by
+   * #recordSessionDecision. Only the restore at startup is reported, so the
+   * first call wins. A session held back for a later window gets its outcome
+   * here, not when that window eventually opens.
+   *
+   * @param {string} outcome
+   *        One of "restored", "deferred_to_window", "no_windows" or
+   *        "nothing".
+   */
+  #recordSessionOutcome(outcome) {
+    if (this.#sessionOutcomeRecorded) {
+      return;
+    }
+    this.#sessionOutcomeRecorded = true;
+    Glean.sessionRestore.startupSessionOutcome.record({ outcome });
+    this.#log.debug(
+      `Session outcome: ${outcome}, ${this.#restoreCount} windows`
+    );
   }
 
   /**
@@ -1849,6 +1872,7 @@ class _SessionStore {
           this.#deferredInitialState = lazy.SessionStartup.state;
 
           // Nothing to restore now, notify observers things are complete.
+          this.#recordSessionOutcome("deferred_to_window");
           Services.obs.notifyObservers(null, NOTIFY_WINDOWS_RESTORED);
           Services.obs.notifyObservers(
             null,
@@ -1882,6 +1906,7 @@ class _SessionStore {
         }
       } else {
         // Nothing to restore, notify observers things are complete.
+        this.#recordSessionOutcome("nothing");
         Services.obs.notifyObservers(null, NOTIFY_WINDOWS_RESTORED);
         Services.obs.notifyObservers(
           null,
@@ -6597,6 +6622,7 @@ class _SessionStore {
     );
     // We're done here if there are no windows.
     if (!root.windows || !root.windows.length) {
+      this.#recordSessionOutcome("no_windows");
       this.#sendRestoreCompletedNotifications();
       return;
     }
@@ -6700,13 +6726,21 @@ class _SessionStore {
     // If we restore the selected tab, make sure it goes first.
     let selectedIndex = aTabs.indexOf(tabbrowser.selectedTab);
     if (selectedIndex > -1) {
-      this.#restoreTab(tabbrowser.selectedTab, aTabData[selectedIndex]);
+      try {
+        this.#restoreTab(tabbrowser.selectedTab, aTabData[selectedIndex]);
+      } catch (ex) {
+        this.#log.error(ex);
+      }
     }
 
     // Restore all tabs.
     for (let t = 0; t < aTabs.length; t++) {
       if (t != selectedIndex) {
-        this.#restoreTab(aTabs[t], aTabData[t]);
+        try {
+          this.#restoreTab(aTabs[t], aTabData[t]);
+        } catch (ex) {
+          this.#log.error(ex);
+        }
       }
     }
   }
@@ -6759,6 +6793,15 @@ class _SessionStore {
       (tab.splitview && tab.splitview == tabbrowser.selectedTab.splitview);
     let isBrowserInserted = browser.isConnected;
 
+    // Every tab the tabbrowser inserts gets a position from
+    // #updateTabsAfterInsert(). Check for one before the window is marked busy,
+    // so that a tab that cannot be restored leaves that state untouched.
+    if (tab.index === undefined) {
+      throw new Error(
+        "Shouldn't be trying to restore a tab that has no position"
+      );
+    }
+
     // Increase the busy state counter before modifying the tab.
     this.#setWindowStateBusy(window);
 
@@ -6766,14 +6809,6 @@ class _SessionStore {
     // we collect their data for the first time when saving state.
     DirtyWindows.add(window);
 
-    // TODO: Check whether this is reachable at all. Every tab the tabbrowser
-    // inserts gets indexed by #updateTabsAfterInsert(), so a tab arriving here
-    // should always have a position.
-    if (tab.index === undefined) {
-      throw new Error(
-        "Shouldn't be trying to restore a tab that has no position"
-      );
-    }
     // Update the tab state in case we shut down without being notified.
     this.#windows[this.#windowIds.get(window)].tabs[tab.index] = tabData;
 
@@ -8124,6 +8159,7 @@ class _SessionStore {
 
     // This was the last window restored at startup, notify observers.
     if (!this.#browserSetState) {
+      this.#recordSessionOutcome("restored");
       Services.obs.notifyObservers(null, NOTIFY_WINDOWS_RESTORED);
       this.#log.debug(`All ${this.#restoreCount} windows restored`);
       this.#maybeOpenNewTabAfterRestore();

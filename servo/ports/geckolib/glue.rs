@@ -4481,6 +4481,7 @@ pub extern "C" fn Servo_PositionTryRule_SetStyle(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Servo_ComputedValues_GetForPageContent(
     raw_data: &PerDocumentStyleData,
+    parent_style: Option<&ComputedValues>,
     page_name: *const nsAtom,
     pseudos: PagePseudoClassFlags,
 ) -> Strong<ComputedValues> {
@@ -4518,7 +4519,7 @@ pub unsafe extern "C" fn Servo_ComputedValues_GetForPageContent(
         .precomputed_values_for_pseudo_with_rule_node::<GeckoElement>(
             &guards,
             &PseudoElement::MozPageContent,
-            None,
+            parent_style,
             rule_node,
         )
         .into()
@@ -9842,10 +9843,18 @@ pub extern "C" fn Servo_ParseTransformIntoMatrix(
     true
 }
 
+/// How to treat url() filters.
+#[repr(u8)]
+pub enum FilterUrlHandling {
+    Keep,
+    Reject,
+    Ignore,
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Servo_ParseFilters(
     value: &nsACString,
-    ignore_urls: bool,
+    url_handling: FilterUrlHandling,
     data: *mut URLExtraData,
     out: &mut style::OwnedSlice<Filter>,
 ) -> bool {
@@ -9890,8 +9899,12 @@ pub extern "C" fn Servo_ParseFilters(
             Err(..) => return false,
         };
 
-        if ignore_urls && matches!(filter, Filter::Url(_)) {
-            continue;
+        if matches!(filter, Filter::Url(_)) {
+            match url_handling {
+                FilterUrlHandling::Ignore => continue,
+                FilterUrlHandling::Reject => return false,
+                FilterUrlHandling::Keep => {},
+            }
         }
 
         filters.push(filter);
@@ -11543,19 +11556,14 @@ fn compute_arbritrary_substitution_functions(
         .refs
         .iter()
         .filter_map(|reference| {
-            if !reference.is_attr_with_type() {
-                return None;
-            }
-
-            let value = custom_properties::get_attr_value_for_cycle_resolution(
-                &reference.name,
-                &reference.attribute_data,
-                &variable_value.url_data,
-                &mut attribute_tracker,
-            )
-            .ok()?;
-
-            Some((reference.name.clone(), Some(value)))
+            let attr = match &reference.function {
+                style::substitution::SubstitutionFunction::Attr(attr) if attr.has_type() => attr,
+                _ => return None,
+            };
+            let value = attr
+                .value_for_cycle_resolution(&variable_value.url_data, &mut attribute_tracker)
+                .ok()?;
+            Some((attr.name.clone(), Some(value)))
         })
         .collect();
     let substitution_functions = custom_properties::ComputedSubstitutionFunctions::new(
@@ -11563,7 +11571,7 @@ fn compute_arbritrary_substitution_functions(
         Some(attributes),
     );
 
-    let Ok(result) = custom_properties::substitute(
+    let Ok(result) = style::substitution::substitute(
         &variable_value,
         // TODO(Bug 2071366) - Thread the property being explained through InspectorUtils so
         // that random() resolves the same way it does in the cascade.

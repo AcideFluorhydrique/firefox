@@ -2486,7 +2486,7 @@ void HTMLInputElement::OpenDateTimePicker(const DateTimeValue& aInitialValue) {
     return;
   }
 
-  mDateTimeInputBoxValue = MakeUnique<DateTimeValue>(aInitialValue);
+  mDateTimeInputBoxValue = std::make_unique<DateTimeValue>(aInitialValue);
   nsContentUtils::DispatchChromeEvent(this, u"MozOpenDateTimePicker"_ns,
                                       CanBubble::eYes, Cancelable::eYes);
 }
@@ -4936,11 +4936,8 @@ void HTMLInputElement::HandleTypeChange(FormControlType aNewType,
       }
     }
     // We should update our mapped attribute mapping function.
-    if (mAttrs.HasAttrs() && !mAttrs.IsPendingMappedAttributeEvaluation()) {
-      mAttrs.InfallibleMarkAsPendingPresAttributeEvaluation();
-      if (auto* doc = GetComposedDoc()) {
-        doc->ScheduleForPresAttrEvaluation(this);
-      }
+    if (mAttrs.HasAttrs()) {
+      ScheduleForPresAttrEvaluationIfNeeded();
     }
   }
 

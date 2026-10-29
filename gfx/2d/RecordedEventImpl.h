@@ -3652,7 +3652,7 @@ RecordedPathCreation::RecordedPathCreation(S& aStream)
   ReadElement(aStream, mRefPtr);
   ReadElementConstrained(aStream, mFillRule, FillRule::FILL_WINDING,
                          FillRule::FILL_EVEN_ODD);
-  mPathOps = MakeUnique<PathOps>(aStream);
+  mPathOps = std::make_unique<PathOps>(aStream);
 }
 
 inline void RecordedPathCreation::OutputSimpleEventInfo(
@@ -4242,7 +4242,7 @@ inline bool RecordedFontData::PlayEvent(Translator* aTranslator) const {
     }
 
     gfxOTSExpandingMemoryStream<gfxOTSMozAlloc> output(lengthHint);
-    gfxOTSContext otsContext;
+    gfxOTSContext otsContext(/* aDropShapingTables = */ true);
     if (!otsContext.Process(&output, data, length)) {
       gfxCriticalNote << "Failed sanitizing recorded font of size " << length;
       return false;

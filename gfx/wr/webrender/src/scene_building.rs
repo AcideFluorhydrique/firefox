@@ -37,15 +37,16 @@
 
 use api::{AlphaType, BorderDetails, BorderDisplayItem, BuiltDisplayList, BuiltDisplayListIter, PrimitiveFlags, SnapshotInfo};
 use api::{ClipId, ColorF, CommonItemProperties, ComplexClipRegion, ComponentTransferFuncType, RasterSpace};
-use api::{DebugFlags, DisplayItem, DisplayItemRef, ExternalScrollId, FilterData};
+use api::{DebugFlags, DisplayItem, DisplayItemRef, DlParseContext, ExternalScrollId, FilterData};
 use api::{FilterOp, FontInstanceKey, FontSize, GlyphInstance, GlyphOptions, GlyphShadowMode, GradientStop};
 use api::{IdNamespace, IframeDisplayItem, ImageKey, ImageRendering, ItemRange, ColorDepth, QualitySettings};
-use api::{LineOrientation, LineStyle, NinePatchBorderSource, PipelineId, MixBlendMode, StackingContextFlags};
+use api::{NinePatchBorderSource, PipelineId, MixBlendMode, StackingContextFlags};
 use api::{PropertyBinding, ReferenceFrameKind, ScrollFrameDescriptor};
 use api::{APZScrollGeneration, HasScrollLinkedEffect, SpatialId, StickyFrameDescriptor, ImageMask, ItemTag};
 use api::{ClipMode, TransformStyle, YuvColorSpace, ColorRange, YuvData, TempFilterData};
 use api::{ReferenceTransformBinding, Rotation, FillRule, SpatialTreeItem, ReferenceFrameDescriptor};
 use api::{FilterOpGraphPictureBufferId, SVGFE_GRAPH_MAX};
+use api::Path;
 use api::channel::{unbounded_channel, Receiver, Sender};
 use api::units::*;
 use api::prim_geometry::{
@@ -80,7 +81,6 @@ use crate::prim_store::gradient::{
     GradientStopKey,
 };
 use crate::prim_store::image::{Image, StretchSizeKey, SubRectKey, YuvImage};
-use crate::prim_store::line_dec::LineDecoration;
 use crate::prim_store::picture::{Picture, PictureKey};
 use crate::picture_composite_mode::{PictureCompositeKey, PictureCompositeMode};
 use crate::prim_store::text_run::TextRun;
@@ -512,6 +512,9 @@ pub struct SceneBuilder<'a> {
     /// embed policy rejected.
     embed_policy_violations: Vec<(PipelineId, PipelineId)>,
 
+    /// The pipelines whose display lists have been walked by this build.
+    walked_pipelines: Vec<PipelineId>,
+
     /// Debug flags for the current scene build. Consulted e.g. to optionally
     /// disable promoting rounded-rect clips to compositor clips.
     debug_flags: DebugFlags,
@@ -577,6 +580,7 @@ impl<'a> SceneBuilder<'a> {
             clip_tree_builder: recycler.clip_tree_builder.take().unwrap_or_else(|| ClipTreeBuilder::new()),
             extra_stacking_context_stack: Vec::new(),
             embed_policy_violations: Vec::new(),
+            walked_pipelines: Vec::new(),
             debug_flags,
         };
 
@@ -660,6 +664,7 @@ impl<'a> SceneBuilder<'a> {
             surfaces: builder.surfaces,
             clip_tree,
             embed_policy_violations: builder.embed_policy_violations,
+            walked_pipelines: builder.walked_pipelines,
             recycler_tx: Some(recycler.tx.clone()),
         }
     }
@@ -923,7 +928,11 @@ impl<'a> SceneBuilder<'a> {
             namespace: root_pipeline.namespace,
             kind: ContextKind::Root,
         }];
-        let mut traversal = root_pipeline.display_list.iter();
+        self.walked_pipelines.push(root_pipeline_id);
+        let mut traversal = root_pipeline.display_list.iter_with_context(DlParseContext {
+            pipeline_id: Some(root_pipeline_id),
+            built_before: root_pipeline.built_before,
+        });
 
         'outer: while let Some(bc) = stack.pop() {
             loop {
@@ -1299,7 +1308,11 @@ impl<'a> SceneBuilder<'a> {
             iframe_pipeline_id,
         );
 
-        Some((pipeline.namespace, pipeline.display_list.iter()))
+        self.walked_pipelines.push(iframe_pipeline_id);
+        Some((pipeline.namespace, pipeline.display_list.iter_with_context(DlParseContext {
+            pipeline_id: Some(iframe_pipeline_id),
+            built_before: pipeline.built_before,
+        })))
     }
 
     fn get_space(
@@ -1516,20 +1529,18 @@ impl<'a> SceneBuilder<'a> {
             DisplayItem::Line(ref info) => {
                 tracy_rs::profile_scope!("line");
 
-                let (layout, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
-                    &info.common,
-                    info.area,
-                );
-
-                self.add_line(
-                    spatial_node_index,
-                    clip_node_id,
-                    &layout,
-                    info.wavy_line_thickness,
-                    info.orientation,
-                    info.color,
-                    info.style,
-                );
+                // A line captured for a shadow with nothing to draw itself
+                // carries no handle; its copy was recorded in its place.
+                if info.line != api::interning::Handle::INVALID {
+                    let stores = self.scene_stores;
+                    self.add_dl_prim(
+                        info.spatial_id,
+                        info.clip_chain_id,
+                        &stores.line_decorations,
+                        info.line,
+                        |handle| PrimitiveKind::LineDecoration { handle },
+                    );
+                }
             }
             DisplayItem::Gradient(ref info) => {
                 tracy_rs::profile_scope!("gradient");
@@ -1621,22 +1632,13 @@ impl<'a> SceneBuilder<'a> {
             DisplayItem::BoxShadow(ref info) => {
                 tracy_rs::profile_scope!("box_shadow");
 
-                let (layout, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
-                    &info.common,
-                    info.bounds,
-                );
-
-                self.add_box_shadow(
-                    spatial_node_index,
-                    clip_node_id,
-                    &layout,
-                    &info.offset,
-                    info.color,
-                    info.blur_radius,
-                    info.spread_amount,
-                    info.border_radius,
-                    info.shadow_radius,
-                    info.clip_mode,
+                let stores = self.scene_stores;
+                self.add_dl_prim(
+                    info.spatial_id,
+                    info.clip_chain_id,
+                    &stores.box_shadows,
+                    info.box_shadow,
+                    |handle| PrimitiveKind::BoxShadow { handle },
                 );
             }
             DisplayItem::Border(ref info) => {
@@ -1686,6 +1688,29 @@ impl<'a> SceneBuilder<'a> {
                     info.fill_rule,
                     item.points(),
                 );
+            }
+            DisplayItem::PathClip(ref info) => {
+                tracy_rs::profile_scope!("path_clip");
+
+                let (dl_namespace, generation) = self.dl_namespace;
+                let path = DlHandle::new(dl_namespace, generation, info.path.slot());
+
+                if self.scene_stores.path.get(path).is_some() {
+                    self.add_path_clip_node(
+                        info.id,
+                        info.spatial_id,
+                        path,
+                        info.rect,
+                        info.fill_rule,
+                    );
+                } else {
+                    // As with image masks, a handle naming no path is neutralized
+                    // into an empty clip rather than dropped, so that later clip
+                    // chain items referring to this id still resolve and the
+                    // content stays clipped.
+                    warn!("path clip refers to an unknown path {:?}", path);
+                    self.add_rect_clip_node(info.id, info.spatial_id, &LayoutRect::zero(), false);
+                }
             }
             DisplayItem::RoundedRectClip(ref info) => {
                 tracy_rs::profile_scope!("rounded_clip");
@@ -1806,6 +1831,7 @@ impl<'a> SceneBuilder<'a> {
             clip_node_id,
             &self.clip_tree_builder,
             self.interners,
+            self.scene_stores,
         );
     }
 
@@ -1931,21 +1957,6 @@ impl<'a> SceneBuilder<'a> {
         );
 
         flags
-    }
-
-    fn make_current_slice_atomic_if_required(&mut self) {
-        let has_non_wrapping_sc = self.sc_stack
-            .iter()
-            .position(|sc| {
-                !sc.flags.contains(StackingContextFlags::WRAPS_BACKDROP_FILTER)
-            })
-            .is_some();
-
-        if has_non_wrapping_sc {
-            return;
-        }
-
-        self.tile_cache_builder.make_current_slice_atomic();
     }
 
     /// If no stacking contexts are present (i.e. we are adding prims to a tile
@@ -2680,6 +2691,37 @@ impl<'a> SceneBuilder<'a> {
         );
     }
 
+    fn add_path_clip_node(
+        &mut self,
+        new_node_id: ClipId,
+        spatial_id: SpatialId,
+        path: DlHandle<Path>,
+        rect: LayoutRect,
+        fill_rule: FillRule,
+    ) {
+        let spatial_node_index = self.get_space(spatial_id);
+
+        let item = ClipItemKey {
+            kind: ClipItemKeyKind::Path(path, self.scene_stores.path.uid(path), fill_rule, rect.min.to_au()),
+        };
+
+        let handle = self
+            .interners
+            .clip
+            .intern(&item, || {
+                ClipInternData {
+                    key: item,
+                }
+            });
+
+        self.clip_tree_builder.define_path_clip(
+            new_node_id,
+            handle,
+            spatial_node_index,
+            rect,
+        );
+    }
+
     /// Add a new rectangle clip, positioned by the spatial node in the `space_and_clip`.
     fn add_rect_clip_node(
         &mut self,
@@ -2778,29 +2820,6 @@ impl<'a> SceneBuilder<'a> {
         );
         self.id_to_index_mapper_stack.last_mut().unwrap().add_spatial_node(new_node_id, node_index);
         node_index
-    }
-
-    pub fn add_line(
-        &mut self,
-        spatial_node_index: SpatialNodeIndex,
-        clip_node_id: ClipNodeId,
-        info: &LayoutPrimitiveInfo,
-        wavy_line_thickness: f32,
-        orientation: LineOrientation,
-        color: ColorF,
-        style: LineStyle,
-    ) {
-        self.add_primitive(
-            spatial_node_index,
-            clip_node_id,
-            &info,
-            LineDecoration {
-                style,
-                orientation,
-                wavy_line_thickness: Au::from_f32_px(wavy_line_thickness),
-                color: color.into(),
-            },
-        );
     }
 
     pub fn add_border(
@@ -3149,8 +3168,6 @@ impl<'a> SceneBuilder<'a> {
         // backdrop root, but we can't know this if the root is a picture cache slice
         // (which is the common case). It will get resolved later during `finalize_picture`.
         let filter_spatial_node_index = SpatialNodeIndex::UNKNOWN;
-
-        self.make_current_slice_atomic_if_required();
 
         // Ensure we create a clip-chain for the capture primitive that matches
         // the render primitive, otherwise one might get culled while the other

@@ -27,7 +27,7 @@ import {
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://browser/content/aiwindow/components/smartwindow-smartbar-glow.mjs";
 // eslint-disable-next-line import/no-unassigned-import
-import "chrome://browser/content/aiwindow/components/ai-website-chip.mjs";
+import "chrome://browser/content/aiwindow/components/smartwindow-chip.mjs";
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://browser/content/aiwindow/components/input-cta.mjs";
 // eslint-disable-next-line import/no-unassigned-import
@@ -468,7 +468,7 @@ ${
         this
       );
       this._inputCta.addEventListener("shown", this);
-      this.addEventListener("ai-website-chip:remove", this);
+      this.addEventListener("smartwindow-chip:remove", this);
       this.#findWebsiteContextChipsContainer();
       this.#updateContextChips();
     }
@@ -726,7 +726,7 @@ ${
         this
       );
       this._inputCta.removeEventListener("shown", this);
-      this.removeEventListener("ai-website-chip:remove", this);
+      this.removeEventListener("smartwindow-chip:remove", this);
     }
 
     this.#removeContextMenuItems();
@@ -1612,8 +1612,8 @@ ${
       return;
     }
 
-    // Handle website chip remove events.
-    if (event.type === "ai-website-chip:remove") {
+    // Handle smartwindow chip remove events.
+    if (event.type === "smartwindow-chip:remove") {
       const { url, groupId } = /** @type {CustomEvent} */ (event).detail;
       this.removeContextMention(groupId ?? url);
       const { chat_id, message_seq } = this.conversationTelemetryInfo;
@@ -2049,28 +2049,29 @@ ${
 
   /**
    * Records the engagement and a search against an engine, adds it to form
-   * history, and opens its SERP through the parent controller, which builds the
-   * submission URL and annotates the load as a search visit. Shared by the
-   * one-off and search-mode Enter paths, which return once it's done. The engine
-   * only needs to carry an id and name -- the parent resolves the full engine
-   * from the id -- so this stays content-safe for a message-path `<moz-urlbar>`.
+   * history, and loads its SERP as a search visit. Shared by the one-off and
+   * search-mode Enter paths, which return once it's done. The engine only needs
+   * to carry an id and name -- the parent resolves the full engine and builds
+   * the submission URL -- so this stays content-safe for a message-path
+   * `<moz-urlbar>`.
    *
    * @param {PartialSearchEngine|SearchEngine} engine The engine to search.
    * @param {string} searchString The string to search for.
    * @param {string} where Where the SERP will open.
+   * @param {LoadURLParams} openParams The load's params.
    * @param {object} details
    * @param {?Event} details.event The triggering event.
    * @param {?HTMLElement} details.element The picked view element, if any.
    * @param {string} details.selType The engagement's selection type.
    * @param {string} details.typedValue The value the engagement records.
    * @param {?UrlbarResult} details.result The result Enter acted on, if any.
-   * @param {boolean} [details.inBackground] Whether to open in a background tab.
    */
   #openEngineSearch(
     engine,
     searchString,
     where,
-    { event, element, selType, typedValue, result, inBackground }
+    openParams,
+    { event, element, selType, typedValue, result }
   ) {
     this.controller.engagementEvent.record(event, {
       element,
@@ -2091,13 +2092,21 @@ ${
       query: searchString,
       where,
     });
-    this.parentController.openSERP(
-      engine.id,
-      searchString,
+    openParams.allowInheritPrincipal = false;
+    openParams.globalHistoryOptions = {
+      ...openParams.globalHistoryOptions,
+      triggeringSource: this.#sapName,
+      triggeringSearchEngine: engine.name,
+    };
+    this.#loadURL({
+      loadRequest: {
+        engineSearch: { engineName: engine.name, query: searchString },
+      },
+      event,
       where,
-      inBackground,
-      this.#selectedBrowserId
-    );
+      params: openParams,
+      browserId: this.#selectedBrowserId,
+    });
   }
 
   /**
@@ -2239,13 +2248,13 @@ ${
         oneOffParams.engine,
         this.#engineSearchStringForResult(result),
         oneOffParams.openWhere,
+        openParams,
         {
           event,
           element,
           selType: "oneoff",
           typedValue: this._lastSearchString,
           result,
-          inBackground: openParams.inBackground,
         }
       );
       return;
@@ -2255,6 +2264,7 @@ ${
         searchModeEngine,
         typedValue,
         this.controller.whereToOpen(event),
+        openParams,
         { event, element, selType, typedValue, result }
       );
       return;

@@ -5,6 +5,12 @@
 
 // Tests temporal search suggestion results in the zero prefix view.
 
+ChromeUtils.defineESModuleGetters(this, {
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
+  TelemetryReportingPolicy:
+    "resource://gre/modules/TelemetryReportingPolicy.sys.mjs",
+});
+
 const QUERIES = ["q1", "q2", "q3", "q4", "q5", "q6", "q7"];
 
 let gEngine;
@@ -219,6 +225,53 @@ add_task(async function notShown() {
   await setRecords();
 });
 
+// Enrolling with the `temporalFeatureGate` Nimbus variable sets
+// `temporal.featureGate`, which enables temporal results and the zero prefix
+// layout.
+add_task(async function nimbus() {
+  UrlbarPrefs.clear("temporal.featureGate");
+  await QuickSuggestTestUtils.forceSync();
+  gFeature._reset();
+  Assert.ok(!gFeature.isEnabled, "Feature is disabled before enrollment");
+  await checkQuery([]);
+
+  let cleanUpNimbus = await UrlbarTestUtils.initNimbusFeature(
+    { temporalFeatureGate: true },
+    { isRollout: false }
+  );
+  await QuickSuggestTestUtils.forceSync();
+  Assert.ok(
+    UrlbarPrefs.get("temporal.featureGate"),
+    "Enrollment sets temporal.featureGate"
+  );
+  Assert.ok(gFeature.isEnabled, "Feature is enabled after enrollment");
+  Assert.equal(
+    createContext("").maxResults,
+    UrlbarPrefs.get("temporal.zeroPrefixMaxRichResults"),
+    "Zero prefix layout is used after enrollment"
+  );
+  gFeature._reset();
+  await checkQuery(["q1", "q2", "q3", "q4", "q5"]);
+
+  await cleanUpNimbus();
+  await QuickSuggestTestUtils.forceSync();
+  Assert.ok(
+    !UrlbarPrefs.get("temporal.featureGate"),
+    "Unenrollment restores temporal.featureGate"
+  );
+  Assert.ok(!gFeature.isEnabled, "Feature is disabled after unenrollment");
+  Assert.equal(
+    createContext("").maxResults,
+    UrlbarPrefs.get("maxRichResults"),
+    "Zero prefix layout is not used after unenrollment"
+  );
+  gFeature._reset();
+  await checkQuery([]);
+
+  UrlbarPrefs.set("temporal.featureGate", true);
+  await QuickSuggestTestUtils.forceSync();
+});
+
 // Calls `makeResult()` for a temporal suggestion with the given context.
 function makeResultForContext(context) {
   return gFeature.makeResult(context, {
@@ -245,13 +298,13 @@ add_task(async function makeResult_smartbar() {
   Assert.equal(await makeResultForContext(context), null);
 });
 
-// `makeResult()` returns a result in search mode for the default engine.
+// `makeResult()` returns null in search mode for the default engine.
 add_task(async function makeResult_searchMode_default() {
   let context = createContext("", {
     isPrivate: false,
     searchMode: { engineName: gEngine.name },
   });
-  Assert.ok(await makeResultForContext(context), "Returns a result");
+  Assert.equal(await makeResultForContext(context), null);
 });
 
 // `makeResult()` returns null in search mode for other engines.

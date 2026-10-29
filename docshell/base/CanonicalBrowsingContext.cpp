@@ -659,8 +659,8 @@ CanonicalBrowsingContext::CreateLoadingSessionHistoryEntryForLoad(
     }
 
     // If the entry was updated, update also the LoadingSessionHistoryInfo.
-    UniquePtr<LoadingSessionHistoryInfo> lshi =
-        MakeUnique<LoadingSessionHistoryInfo>(entry, existingLoadingInfo);
+    auto lshi =
+        std::make_unique<LoadingSessionHistoryInfo>(entry, existingLoadingInfo);
     aLoadState->SetLoadingSessionHistoryInfo(std::move(lshi));
     existingLoadingInfo = aLoadState->GetLoadingSessionHistoryInfo();
     (void)SetHistoryEntryCount(entry->BCHistoryLength());
@@ -686,9 +686,10 @@ CanonicalBrowsingContext::CreateLoadingSessionHistoryEntryForLoad(
 
   UniquePtr<LoadingSessionHistoryInfo> loadingInfo;
   if (existingLoadingInfo) {
-    loadingInfo = MakeUnique<LoadingSessionHistoryInfo>(*existingLoadingInfo);
+    loadingInfo =
+        std::make_unique<LoadingSessionHistoryInfo>(*existingLoadingInfo);
   } else {
-    loadingInfo = MakeUnique<LoadingSessionHistoryInfo>(entry);
+    loadingInfo = std::make_unique<LoadingSessionHistoryInfo>(entry);
     mLoadingEntries.AppendElement(
         LoadingSessionHistoryEntry{loadingInfo->mLoadId, entry});
   }
@@ -805,7 +806,8 @@ CanonicalBrowsingContext::ReplaceLoadingSessionHistoryEntryForLoad(
         MaybeReuseNavigationKeyFromActiveEntry(loadingEntry);
       }
 
-      auto result = MakeUnique<LoadingSessionHistoryInfo>(loadingEntry, aInfo);
+      auto result =
+          std::make_unique<LoadingSessionHistoryInfo>(loadingEntry, aInfo);
       if (Navigation::IsAPIEnabled()) {
         MOZ_LOG_FMT(gNavigationAPILog, LogLevel::Debug,
                     "CanonicalBrowsingContext::"
@@ -919,8 +921,9 @@ class PrintListenerAdapter final : public nsIWebProgressListener {
   NS_DECL_ISUPPORTS
 
   // NS_DECL_NSIWEBPROGRESSLISTENER
-  NS_IMETHOD OnStateChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
-                           uint32_t aStateFlags, nsresult aStatus) override {
+  NS_IMETHOD OnStateChange(nsIWebProgress* /*aWebProgress*/,
+                           nsIRequest* /*aRequest*/, uint32_t aStateFlags,
+                           nsresult /*aStatus*/) override {
     MOZ_ASSERT(NS_IsMainThread());
     if (aStateFlags & nsIWebProgressListener::STATE_STOP &&
         aStateFlags & nsIWebProgressListener::STATE_IS_DOCUMENT && mPromise) {
@@ -932,34 +935,36 @@ class PrintListenerAdapter final : public nsIWebProgressListener {
     }
     return NS_OK;
   }
-  NS_IMETHOD OnStatusChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
-                            nsresult aStatus,
-                            const char16_t* aMessage) override {
+  NS_IMETHOD OnStatusChange(nsIWebProgress* /*aWebProgress*/,
+                            nsIRequest* /*aRequest*/, nsresult aStatus,
+                            const char16_t* /*aMessage*/) override {
     if (aStatus != NS_OK && mPromise) {
       mPromise->Reject(aStatus, __func__);
       mPromise = nullptr;
     }
     return NS_OK;
   }
-  NS_IMETHOD OnProgressChange(nsIWebProgress* aWebProgress,
-                              nsIRequest* aRequest, int32_t aCurSelfProgress,
-                              int32_t aMaxSelfProgress,
-                              int32_t aCurTotalProgress,
-                              int32_t aMaxTotalProgress) override {
+  NS_IMETHOD OnProgressChange(nsIWebProgress* /*aWebProgress*/,
+                              nsIRequest* /*aRequest*/,
+                              int32_t /*aCurSelfProgress*/,
+                              int32_t /*aMaxSelfProgress*/,
+                              int32_t /*aCurTotalProgress*/,
+                              int32_t /*aMaxTotalProgress*/) override {
     return NS_OK;
   }
-  NS_IMETHOD OnLocationChange(nsIWebProgress* aWebProgress,
-                              nsIRequest* aRequest, nsIURI* aLocation,
-                              uint32_t aFlags) override {
+  NS_IMETHOD OnLocationChange(nsIWebProgress* /*aWebProgress*/,
+                              nsIRequest* /*aRequest*/, nsIURI* /*aLocation*/,
+                              uint32_t /*aFlags*/) override {
     return NS_OK;
   }
-  NS_IMETHOD OnSecurityChange(nsIWebProgress* aWebProgress,
-                              nsIRequest* aRequest, uint32_t aState) override {
+  NS_IMETHOD OnSecurityChange(nsIWebProgress* /*aWebProgress*/,
+                              nsIRequest* /*aRequest*/,
+                              uint32_t /*aState*/) override {
     return NS_OK;
   }
-  NS_IMETHOD OnContentBlockingEvent(nsIWebProgress* aWebProgress,
-                                    nsIRequest* aRequest,
-                                    uint32_t aEvent) override {
+  NS_IMETHOD OnContentBlockingEvent(nsIWebProgress* /*aWebProgress*/,
+                                    nsIRequest* /*aRequest*/,
+                                    uint32_t /*aEvent*/) override {
     return NS_OK;
   }
 
@@ -1150,7 +1155,7 @@ RefPtr<PrintPromise> CanonicalBrowsingContext::PrintWithNoContentAnalysis(
           listener->StaticCloneForPrintingCreated(
               std::move(cachedStaticDocument));
         },
-        [promise](ResponseRejectReason reason) {
+        [promise](ResponseRejectReason /*reason*/) {
           NS_WARNING("SendPrint() failed");
           promise->Reject(NS_ERROR_FAILURE, __func__);
         });
@@ -1423,8 +1428,7 @@ already_AddRefed<nsDocShellLoadState> CanonicalBrowsingContext::CreateLoadInfo(
   const SessionHistoryInfo& info = aEntry->Info();
   RefPtr loadState = MakeRefPtr<nsDocShellLoadState>(info.GetURI());
   info.FillLoadInfo(*loadState);
-  UniquePtr<LoadingSessionHistoryInfo> loadingInfo;
-  loadingInfo = MakeUnique<LoadingSessionHistoryInfo>(aEntry);
+  auto loadingInfo = std::make_unique<LoadingSessionHistoryInfo>(aEntry);
   loadingInfo->mTriggeringNavigationType = Some(aNavigationType);
   mLoadingEntries.AppendElement(
       LoadingSessionHistoryEntry{loadingInfo->mLoadId, aEntry});
@@ -2130,7 +2134,7 @@ void CanonicalBrowsingContext::NotifyStartDelayedAutoplayMedia() {
 }
 
 uint32_t CanonicalBrowsingContext::CountSiteOrigins(
-    GlobalObject& aGlobal,
+    GlobalObject& /*aGlobal*/,
     const Sequence<OwningNonNull<BrowsingContext>>& aRoots) {
   nsTHashSet<nsCString> uniqueSiteOrigins;
 
@@ -3144,7 +3148,8 @@ void CanonicalBrowsingContext::DeactivateDocuments(
     Group()->EachParent([this, &targetInfo, aNavigationType,
                          aForUnload](ContentParent* aContentParent) {
       (void)aContentParent->SendDeactivateDocuments(
-          this, targetInfo, aNavigationType, aForUnload);
+          this, GetContentParent() == aContentParent ? targetInfo : Nothing(),
+          aNavigationType, aForUnload);
     });
 
     // When the old document unloads (aForUnload) it is destroyed rather than
@@ -3753,7 +3758,7 @@ struct ClearSiteWalkHistoryData {
 // static
 nsresult CanonicalBrowsingContext::ContainsSameOriginBfcacheEntry(
     SessionHistoryEntry* aEntry, mozilla::dom::BrowsingContext* aBC,
-    int32_t aChildIndex, void* aData) {
+    int32_t /*aChildIndex*/, void* aData) {
   if (!aEntry) {
     return NS_OK;
   }

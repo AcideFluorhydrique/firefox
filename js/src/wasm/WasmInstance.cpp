@@ -2481,7 +2481,8 @@ Instance::Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
       ieeeMxcsr_(0),
       wasmMxcsr_(0),
 #endif
-      allocationMetadataBuilder_(nullptr),
+      hasAllocationMetadataBuilder_(
+          cx->realm()->hasAllocationMetadataBuilder()),
       addressOfLastBufferedWholeCell_(
           cx->runtime()->gc.addressOfLastBufferedWholeCell()) {
   std::fill(std::begin(baselineScratchWords_), std::end(baselineScratchWords_),
@@ -2532,7 +2533,7 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
 
   // Capture this thread's MXCSR once, so the wasm stubs can restore it with
   // a single ldmxcsr each.
-  uint32_t mxcsr = ReadMxcsr();
+  uint32_t mxcsr = mozilla::supports_sse() ? ReadMxcsr() : 0;
   ieeeMxcsr_ = mxcsr;
   if (CanDisableDenormals() && cx->options().wasmDisablesDenormals()) {
     wasmMxcsr_ = mxcsr | MxcsrDenormalsDisabled;

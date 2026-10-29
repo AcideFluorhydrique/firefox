@@ -711,7 +711,10 @@ export class BaseContent extends React.PureComponent {
       global.document?.body.style.removeProperty(
         "--newtab-wallpaper-backgroundPosition"
       );
-      global.document?.body.classList.remove("lightWallpaper", "darkWallpaper");
+      global.document?.documentElement.classList.remove(
+        "lightWallpaper",
+        "darkWallpaper"
+      );
       return;
     }
 
@@ -780,8 +783,11 @@ export class BaseContent extends React.PureComponent {
       color || "transparent"
     );
 
-    global.document?.body.classList.remove("lightWallpaper", "darkWallpaper");
-    global.document?.body.classList.add(
+    global.document?.documentElement.classList.remove(
+      "lightWallpaper",
+      "darkWallpaper"
+    );
+    global.document?.documentElement.classList.add(
       newTheme === "dark" ? "darkWallpaper" : "lightWallpaper"
     );
   }
@@ -1426,18 +1432,10 @@ export class BaseContent extends React.PureComponent {
                 widgetsEnabled={widgetsEnabled}
                 dispatch={this.props.dispatch}
               />
-              {(shouldShowOMCHighlight(
+              {shouldShowOMCHighlight(
                 this.props.Messages,
                 "CustomWallpaperHighlight"
-              ) ||
-                shouldShowOMCHighlight(
-                  this.props.Messages,
-                  "WorldCupWallpaperHighlight"
-                ) ||
-                shouldShowOMCHighlight(
-                  this.props.Messages,
-                  "WorldCupSemiFinalWallpaperHighlight"
-                )) && (
+              ) && (
                 <MessageWrapper dispatch={this.props.dispatch}>
                   <WallpaperFeatureHighlight
                     position="inset-block-start inset-inline-start"

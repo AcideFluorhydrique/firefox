@@ -63,6 +63,8 @@ const lazy = XPCOMUtils.declareLazy({
   SponsorProtection:
     "moz-src:///browser/components/newtab/SponsorProtection.sys.mjs",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.sys.mjs",
+  TabGroupsToolbarButton:
+    "moz-src:///browser/components/tabbrowser/TabGroupsToolbarButton.sys.mjs",
   tabLocalization: () =>
     new Localization(
       [
@@ -261,6 +263,7 @@ export class Tabbrowser {
     this.documentGlobal.addEventListener("deactivate", this);
     this.documentGlobal.addEventListener("TabGroupCollapse", this);
     this.documentGlobal.addEventListener("TabGroupCreateByUser", this);
+    this.documentGlobal.addEventListener("TabGroupCreateDone", this);
     this.documentGlobal.addEventListener("TabGrouped", this);
     this.documentGlobal.addEventListener("TabUngrouped", this);
     this.documentGlobal.addEventListener("TabSplitViewActivate", this);
@@ -5199,34 +5202,32 @@ export class Tabbrowser {
 
       tabs.push(tab);
 
+      // A tab whose group is not in the window's groups list is restored
+      // ungrouped: appending it to the top-level fragment is what gives it a
+      // position.
+      let tabGroup = tabGroupWorkingData.get(tabData.groupId);
+
       if (tabData.pinned) {
         this.pinTab(tab);
         // Then ensure all the tab open/pinning information is sent.
         this.#fireTabOpen(tab, {});
-      } else if (tabData.groupId) {
-        let { groupId } = tabData;
-        const tabGroup = tabGroupWorkingData.get(groupId);
-        // if a tab refers to a tab group we don't know, skip any group
-        // processing
+      } else if (tabGroup) {
+        if (!splitView) {
+          tabGroup.containingTabsFragment.appendChild(tab);
+        } else if (splitView?.node) {
+          tabGroup.containingTabsFragment.appendChild(splitView.node);
+        }
 
-        if (tabGroup) {
-          if (!splitView) {
-            tabGroup.containingTabsFragment.appendChild(tab);
-          } else if (splitView?.node) {
-            tabGroup.containingTabsFragment.appendChild(splitView.node);
-          }
-
-          // if this is the first time encountering a tab group, create its
-          // DOM node once and place it in the tabs bar fragment
-          if (!tabGroup.node) {
-            tabGroup.node = this.#createTabGroup(
-              tabGroup.stateData.id,
-              tabGroup.stateData.color,
-              tabGroup.stateData.collapsed,
-              tabGroup.stateData.name
-            );
-            tabsFragment.appendChild(tabGroup.node);
-          }
+        // if this is the first time encountering a tab group, create its
+        // DOM node once and place it in the tabs bar fragment
+        if (!tabGroup.node) {
+          tabGroup.node = this.#createTabGroup(
+            tabGroup.stateData.id,
+            tabGroup.stateData.color,
+            tabGroup.stateData.collapsed,
+            tabGroup.stateData.name
+          );
+          tabsFragment.appendChild(tabGroup.node);
         }
       } else {
         if (tab.hidden) {
@@ -9505,6 +9506,10 @@ export class Tabbrowser {
 
   on_TabGroupCreateByUser(aEvent) {
     this.tabGroupMenu.openCreateModal(aEvent.target);
+  }
+
+  on_TabGroupCreateDone() {
+    lazy.TabGroupsToolbarButton.maybeAddTabGroupsButton();
   }
 
   on_TabGrouped(aEvent) {

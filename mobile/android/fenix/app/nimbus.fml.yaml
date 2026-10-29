@@ -19,8 +19,13 @@ import:
       pdfjs:
         - channel: developer
           value: {
-          download-button: true,
-          open-in-app-button: true
+          download-button: false,
+          open-in-app-button: false
+        }
+        - channel: nightly
+          value: {
+          download-button: false,
+          open-in-app-button: false
         }
   - path: ../../android-components/components/feature/fxsuggest/fxsuggest.fml.yaml
     channel: release
@@ -875,6 +880,18 @@ features:
         type: Boolean
         default: true
 
+  automotive-sensitive-data:
+    description: >
+      Enables or disables autofill, password management, and password and credit card sync on Android Automotive OS.
+    variables:
+      enabled:
+        description: >
+          Whether password and credit card autofill, password management, and password and credit card sync are
+          enabled on Android Automotive OS. Address autofill is also controlled by this flag. Has no effect on other
+          devices.
+        type: Boolean
+        default: false
+
   app-links:
     description: Control behavior of app links handling in the browser.
     variables:
@@ -882,6 +899,27 @@ features:
         description: Whether to show the new AppLinksPromptFragment dialog when an app link is detected. If false, the old dialog is used.
         type: Boolean
         default: true
+
+  browser-first:
+    description: Feature to enable browser-first handling for YouTube.
+    variables:
+      enabled:
+        description: If true, the feature is enabled.
+        type: Boolean
+        default: false
+    defaults:
+      - channel: release
+        value:
+          enabled: false
+      - channel: beta
+        value:
+          enabled: false
+      - channel: nightly
+        value:
+          enabled: false
+      - channel: developer
+        value:
+          enabled: true
 
   tab-management-enhancements:
     description: Control the visibility of the tab management enhancements.
@@ -1209,6 +1247,14 @@ features:
         type: Boolean
         default: false
 
+  homepage-wrexham-widget:
+    description: Feature to enable Homepage Wrexham Widget for users on Firefox for Android.
+    variables:
+      enabled:
+        description: If true, Homepage Wrexham Widget is enabled.
+        type: Boolean
+        default: false
+
   webcompat-reporter-enhancements:
     description: Feature to enable WebCompat Reporter enhancements for users on Firefox Android.
     variables:
@@ -1308,6 +1354,13 @@ features:
         description: If true, the Android PDF UI tools are shown.
         type: Boolean
         default: false
+    defaults:
+      - channel: developer
+        value:
+          android-ui-tools: true
+      - channel: nightly
+        value:
+          android-ui-tools: true
 
   tab-reload-cover:
     description: >

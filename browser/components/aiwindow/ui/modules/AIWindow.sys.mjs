@@ -79,6 +79,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///browser/components/sessionstore/SessionStartup.sys.mjs",
   MemoriesSchedulers:
     "moz-src:///browser/components/aiwindow/models/memories/MemoriesSchedulers.sys.mjs",
+  MonitorAgent:
+    "moz-src:///browser/components/aiwindow/models/agents/MonitorAgent.sys.mjs",
   MONITOR_CONDITION_MET_TOPIC:
     "moz-src:///browser/components/aiwindow/models/agents/Monitor.sys.mjs",
   MONITOR_RUN_FAILED_TOPIC:
@@ -87,6 +89,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///browser/components/aiwindow/ui/modules/MonitorAttention.sys.mjs",
   MonitorUIUtils:
     "moz-src:///browser/components/aiwindow/ui/modules/MonitorUIUtils.sys.mjs",
+  SmartWindowLocation:
+    "moz-src:///browser/components/aiwindow/models/SmartWindowLocation.sys.mjs",
   SmartWindowTelemetry:
     "moz-src:///browser/components/aiwindow/ui/modules/SmartWindowTelemetry.sys.mjs",
   TelemetryScheduler:
@@ -230,6 +234,7 @@ export const AIWindow = {
   _startSchedulers() {
     lazy.MemoriesSchedulers.maybeRunAndSchedule();
     lazy.TelemetryScheduler.maybeInit();
+    lazy.SmartWindowLocation.refresh();
   },
 
   handlePlacesEvents(events) {
@@ -405,6 +410,7 @@ export const AIWindow = {
     if (!this.isAvailable) {
       this._onAccountLogout();
     }
+    lazy.MonitorAgent.onBlockedStateChanged().catch(console.error);
   },
 
   _updateButtonVisibility(node) {

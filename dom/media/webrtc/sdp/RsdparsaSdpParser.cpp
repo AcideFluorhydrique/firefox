@@ -25,8 +25,7 @@ const std::string& RsdparsaSdpParser::ParserName() {
 
 UniquePtr<SdpParser::Results> RsdparsaSdpParser::Parse(
     const std::string& aText) {
-  UniquePtr<SdpParser::InternalResults> results =
-      std::make_unique<SdpParser::InternalResults>(Name());
+  auto results = std::make_unique<SdpParser::InternalResults>(Name());
   const ffi::SdpSession* result = nullptr;
   const ffi::SdpParserError* err = nullptr;
   ffi::StringView sdpTextView{reinterpret_cast<const uint8_t*>(aText.data()),
@@ -57,7 +56,7 @@ UniquePtr<SdpParser::Results> RsdparsaSdpParser::Parse(
                    rustOrigin.session_id, rustOrigin.session_version,
                    address.first, address.second);
 
-  auto sdp = MakeUnique<RsdparsaSdp>(std::move(uniqueResult), origin);
+  auto sdp = std::make_unique<RsdparsaSdp>(std::move(uniqueResult), origin);
 
   // Bug 2072767 - synthesize an error for unknown media types. The Sdp is left
   // unset on purpose: media.peerconnection.sdp.strict_success defaults to

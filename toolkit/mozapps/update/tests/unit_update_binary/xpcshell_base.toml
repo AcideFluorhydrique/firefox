@@ -129,6 +129,8 @@ run-if = [
 ]
 reason = "Unix only test"
 
+["marFailureCompleteStaleBackup.js"]
+
 ["marFailurePartial.js"]
 
 ["marFailurePartialStaleBackup.js"]
@@ -309,7 +311,6 @@ reason = "Windows only test"
 ["marStageFailurePartialZucchini.js"]
 
 ["marStageSuccessComplete.js"]
-run-sequentially = ["os == 'linux'"] # frequent fail in parallel on Linux
 
 ["marStageSuccessPartial.js"]
 

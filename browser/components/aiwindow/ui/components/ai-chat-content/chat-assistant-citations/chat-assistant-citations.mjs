@@ -8,7 +8,7 @@ import { SmartwindowOverflowRowMixin } from "chrome://browser/content/aiwindow/c
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://global/content/elements/moz-button.mjs";
 // eslint-disable-next-line import/no-unassigned-import
-import "chrome://browser/content/aiwindow/components/ai-website-chip.mjs";
+import "chrome://browser/content/aiwindow/components/smartwindow-chip.mjs";
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://browser/content/aiwindow/components/smartwindow-panel-list.mjs";
 
@@ -98,16 +98,15 @@ export class ChatAssistantCitations extends SmartwindowOverflowRowMixin(
   }
 
   #renderPill(citation, { itemRole, showTitle } = {}) {
-    return html`<ai-website-chip
-      type="context-chip"
-      size="small"
+    return html`<smartwindow-chip
+      type="source"
       role=${itemRole ? "presentation" : nothing}
       .itemRole=${itemRole ?? ""}
       title=${showTitle ? this.#titleText(citation) : nothing}
       .label=${this.#label(citation)}
       .href=${citation.url}
       .iconSrc=${this.#icon(citation)}
-    ></ai-website-chip>`;
+    ></smartwindow-chip>`;
   }
 
   render() {

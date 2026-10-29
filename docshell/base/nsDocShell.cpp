@@ -693,9 +693,10 @@ NS_IMETHODIMP
 nsDocShell::SetCancelContentJSEpoch(int32_t aEpoch) {
   // Note: this gets called fairly early (before a pageload actually starts).
   // We could probably defer this even longer.
-  nsCOMPtr<nsIBrowserChild> browserChild = GetBrowserChild();
-  static_cast<BrowserChild*>(browserChild.get())
-      ->SetCancelContentJSEpoch(aEpoch);
+  if (nsCOMPtr<nsIBrowserChild> browserChild = GetBrowserChild()) {
+    static_cast<BrowserChild*>(browserChild.get())
+        ->SetCancelContentJSEpoch(aEpoch);
+  }
   return NS_OK;
 }
 
@@ -945,7 +946,7 @@ NS_IMETHODIMP StopDetector::CancelWithReason(nsresult aStatus,
 }
 
 NS_IMETHODIMP
-StopDetector::Cancel(nsresult aStatus) {
+StopDetector::Cancel(nsresult /*aStatus*/) {
   mCanceled = true;
   return NS_OK;
 }
@@ -962,7 +963,7 @@ StopDetector::GetLoadGroup(nsILoadGroup** aLoadGroup) {
 }
 
 NS_IMETHODIMP
-StopDetector::SetLoadGroup(nsILoadGroup* aLoadGroup) { return NS_OK; }
+StopDetector::SetLoadGroup(nsILoadGroup* /*aLoadGroup*/) { return NS_OK; }
 
 NS_IMETHODIMP
 StopDetector::GetLoadFlags(nsLoadFlags* aLoadFlags) {
@@ -981,7 +982,7 @@ StopDetector::SetTRRMode(nsIRequest::TRRMode aTRRMode) {
 }
 
 NS_IMETHODIMP
-StopDetector::SetLoadFlags(nsLoadFlags aLoadFlags) { return NS_OK; }
+StopDetector::SetLoadFlags(nsLoadFlags /*aLoadFlags*/) { return NS_OK; }
 
 bool nsDocShell::MaybeHandleSubframeHistory(
     nsDocShellLoadState* aLoadState, bool aContinueHandlingSubframeHistory) {
@@ -2222,7 +2223,7 @@ nsDocShell::GetZoom(float* aZoom) {
 }
 
 NS_IMETHODIMP
-nsDocShell::SetZoom(float aZoom) { return NS_ERROR_NOT_IMPLEMENTED; }
+nsDocShell::SetZoom(float /*aZoom*/) { return NS_ERROR_NOT_IMPLEMENTED; }
 
 NS_IMETHODIMP
 nsDocShell::GetBusyFlags(BusyFlags* aBusyFlags) {
@@ -3336,7 +3337,7 @@ nsresult nsDocShell::FixupAndLoadURIString(
       triggeringPrincipal = nsContentUtils::GetSystemPrincipal();
     }
     UniquePtr<SessionHistoryInfo> previousActiveEntry(mActiveEntry.release());
-    mActiveEntry = MakeUnique<SessionHistoryInfo>(
+    mActiveEntry = std::make_unique<SessionHistoryInfo>(
         uri, triggeringPrincipal, nullptr, nullptr, nullptr,
         nsLiteralCString("text/html"));
     mBrowsingContext->SetActiveSessionHistoryEntry(
@@ -4059,7 +4060,7 @@ nsresult nsDocShell::LoadErrorPage(nsIURI* aErrorURI, nsIURI* aFailedURI,
     // We keep the loading entry for the load that failed here. If the user
     // reloads we want to try to reload the original load, not the error page.
     loadState->SetLoadingSessionHistoryInfo(
-        MakeUnique<LoadingSessionHistoryInfo>(*mLoadingEntry));
+        std::make_unique<LoadingSessionHistoryInfo>(*mLoadingEntry));
   }
 
   // Prevent initial about:blank handling, as it's likely irrelevant and
@@ -4816,13 +4817,13 @@ void nsDocShell::DoGetPositionAndSize(int32_t* aX, int32_t* aY, int32_t* aWidth,
 }
 
 NS_IMETHODIMP
-nsDocShell::SetDimensions(DimensionRequest&& aRequest) {
+nsDocShell::SetDimensions(DimensionRequest&& /*aRequest*/) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
-nsDocShell::GetDimensions(DimensionKind aDimensionKind, int32_t* aX,
-                          int32_t* aY, int32_t* aCX, int32_t* aCY) {
+nsDocShell::GetDimensions(DimensionKind /*aDimensionKind*/, int32_t* /*aX*/,
+                          int32_t* /*aY*/, int32_t* /*aCX*/, int32_t* /*aCY*/) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -4845,7 +4846,7 @@ nsDocShell::SetParentWidget(nsIWidget* aParentWidget) {
 }
 
 NS_IMETHODIMP
-nsDocShell::GetNativeHandle(nsAString& aNativeHandle) {
+nsDocShell::GetNativeHandle(nsAString& /*aNativeHandle*/) {
   // the nativeHandle should be accessed from nsIAppWindow
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -4988,7 +4989,7 @@ nsDocShell::GetEnabled(bool* aEnabled) {
 }
 
 NS_IMETHODIMP
-nsDocShell::SetEnabled(bool aEnabled) { return NS_ERROR_NOT_IMPLEMENTED; }
+nsDocShell::SetEnabled(bool /*aEnabled*/) { return NS_ERROR_NOT_IMPLEMENTED; }
 
 NS_IMETHODIMP
 nsDocShell::GetMainWidget(nsIWidget** aMainWidget) {
@@ -5956,8 +5957,9 @@ nsDocShell::OnSecurityChange(nsIWebProgress* aWebProgress, nsIRequest* aRequest,
 }
 
 NS_IMETHODIMP
-nsDocShell::OnContentBlockingEvent(nsIWebProgress* aWebProgress,
-                                   nsIRequest* aRequest, uint32_t aEvent) {
+nsDocShell::OnContentBlockingEvent(nsIWebProgress* /*aWebProgress*/,
+                                   nsIRequest* /*aRequest*/,
+                                   uint32_t /*aEvent*/) {
   MOZ_ASSERT_UNREACHABLE("notification excluded in AddProgressListener(...)");
   return NS_OK;
 }
@@ -6425,7 +6427,7 @@ nsresult nsDocShell::FilterStatusForErrorPage(
   return NS_OK;
 }
 
-nsresult nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
+nsresult nsDocShell::EndPageLoad(nsIWebProgress* /*aProgress*/,
                                  nsIChannel* aChannel, nsresult aStatus) {
   MOZ_LOG(gDocShellLeakLog, LogLevel::Debug,
           ("DOCSHELL %p EndPageLoad status: %" PRIx32 "\n", this,
@@ -6725,7 +6727,7 @@ nsresult nsDocShell::CreateAboutBlankDocumentViewer(
     nsIPolicyContainer* aPolicyContainer, nsIURI* aBaseURI,
     bool aIsInitialDocument,
     const Maybe<nsILoadInfo::CrossOriginEmbedderPolicy>& aCOEP,
-    bool aTryToSaveOldPresentation, bool aCheckPermitUnload,
+    bool /*aTryToSaveOldPresentation*/, bool aCheckPermitUnload,
     WindowGlobalChild* aActor) {
   RefPtr<Document> blankDoc;
   nsCOMPtr<nsIDocumentViewer> viewer;
@@ -8317,7 +8319,7 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
   UniquePtr<mozilla::dom::LoadingSessionHistoryInfo> oldLoadingEntry;
   mLoadingEntry.swap(oldLoadingEntry);
   if (aLoadState->GetLoadingSessionHistoryInfo()) {
-    mLoadingEntry = MakeUnique<LoadingSessionHistoryInfo>(
+    mLoadingEntry = std::make_unique<LoadingSessionHistoryInfo>(
         *aLoadState->GetLoadingSessionHistoryInfo());
     mNeedToReportActiveAfterLoadingBecomesActive = false;
   }
@@ -8415,7 +8417,7 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
     }
 
     UniquePtr<SessionHistoryInfo> previousActiveEntry(mActiveEntry.release());
-    mActiveEntry = MakeUnique<SessionHistoryInfo>(mLoadingEntry->mInfo);
+    mActiveEntry = std::make_unique<SessionHistoryInfo>(mLoadingEntry->mInfo);
     if (currentLayoutHistoryState) {
       // Restore the existing nsILayoutHistoryState object, since it is
       // possibly being used by the layout. When doing a new load, the
@@ -8466,9 +8468,9 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
     UniquePtr<SessionHistoryInfo> previousActiveEntry(mActiveEntry.release());
     if (previousActiveEntry) {
       mActiveEntry =
-          MakeUnique<SessionHistoryInfo>(*previousActiveEntry, newURI);
+          std::make_unique<SessionHistoryInfo>(*previousActiveEntry, newURI);
     } else {
-      mActiveEntry = MakeUnique<SessionHistoryInfo>(
+      mActiveEntry = std::make_unique<SessionHistoryInfo>(
           newURI, newURITriggeringPrincipal, newURIPrincipalToInherit,
           newURIPartitionedPrincipalToInherit, newPolicyContainer,
           mContentTypeHint);
@@ -8616,9 +8618,7 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
       win->DispatchAsyncHashchange(currentURI, newURI);
     }
 
-    if (aState.mHistoryNavBetweenSameDoc || doHashchange) {
-      win->DispatchSyncPopState();
-    }
+    win->DispatchSyncPopState();
 
     if (needsScrollPosUpdate && win->HasActiveDocument()) {
       SetCurScrollPosEx(bx, by);
@@ -9424,7 +9424,7 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
 /* static */ bool nsDocShell::CreateAndConfigureRealChannelForLoadState(
     BrowsingContext* aBrowsingContext, nsDocShellLoadState* aLoadState,
     LoadInfo* aLoadInfo, nsIInterfaceRequestor* aCallbacks,
-    nsDocShell* aDocShell, const OriginAttributes& aOriginAttributes,
+    nsDocShell* /*aDocShell*/, const OriginAttributes& aOriginAttributes,
     nsLoadFlags aLoadFlags, uint32_t aCacheKey, nsresult& aRv,
     nsIChannel** aChannel) {
   MOZ_ASSERT(aLoadInfo);
@@ -10124,7 +10124,7 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   } else if (doInitialSyncLoad) {
     // Materialize LoadingSessionHistoryInfo here, because DocumentChannel
     // loads have it, and later history behavior depends on it existing.
-    UniquePtr<SessionHistoryInfo> entry = MakeUnique<SessionHistoryInfo>(
+    auto entry = std::make_unique<SessionHistoryInfo>(
         uri, aLoadState->TriggeringPrincipal(),
         aLoadState->PrincipalToInherit(),
         aLoadState->PartitionedPrincipalToInherit(),
@@ -10559,9 +10559,9 @@ nsresult nsDocShell::CompleteInitialAboutBlankLoad(
   return NS_OK;
 }
 
-static nsresult AppendSegmentToString(nsIInputStream* aIn, void* aClosure,
+static nsresult AppendSegmentToString(nsIInputStream* /*aIn*/, void* aClosure,
                                       const char* aFromRawSegment,
-                                      uint32_t aToOffset, uint32_t aCount,
+                                      uint32_t /*aToOffset*/, uint32_t aCount,
                                       uint32_t* aWriteCount) {
   // aFromSegment now contains aCount bytes of data.
 
@@ -10914,8 +10914,8 @@ nsresult nsDocShell::ScrollToAnchor(bool aCurHasRef, bool aNewHasRef,
 bool nsDocShell::OnNewURI(nsIURI* aURI, nsIChannel* aChannel,
                           nsIPrincipal* aTriggeringPrincipal,
                           nsIPrincipal* aPrincipalToInherit,
-                          nsIPrincipal* aPartitionedPrincipalToInherit,
-                          nsIPolicyContainer* aPolicyContainer,
+                          nsIPrincipal* /*aPartitionedPrincipalToInherit*/,
+                          nsIPolicyContainer* /*aPolicyContainer*/,
                           bool aAddToGlobalHistory, bool aCloneSHChildren) {
   MOZ_ASSERT(aURI, "uri is null");
   MOZ_ASSERT(!aChannel || !aTriggeringPrincipal, "Shouldn't have both set");
@@ -11540,11 +11540,12 @@ void nsDocShell::UpdateActiveEntry(
   UniquePtr<SessionHistoryInfo> previousActiveEntry(mActiveEntry.release());
   if (previousActiveEntry) {
     // Link this entry to the previous active entry.
-    mActiveEntry = MakeUnique<SessionHistoryInfo>(*previousActiveEntry, aURI);
+    mActiveEntry =
+        std::make_unique<SessionHistoryInfo>(*previousActiveEntry, aURI);
   } else {
     Document* doc = GetDocument();
     MOZ_ASSERT(doc);
-    mActiveEntry = MakeUnique<SessionHistoryInfo>(
+    mActiveEntry = std::make_unique<SessionHistoryInfo>(
         aURI, aTriggeringPrincipal, doc->NodePrincipal(), nullptr,
         aPolicyContainer, mContentTypeHint);
   }
@@ -11661,7 +11662,7 @@ nsDocShell::MaybeFireTraversableTraverseHistory(
 
 nsresult nsDocShell::LoadHistoryEntry(nsDocShellLoadState* aLoadState,
                                       uint32_t aLoadType,
-                                      bool aLoadingCurrentEntry) {
+                                      bool /*aLoadingCurrentEntry*/) {
   if (!IsNavigationAllowed()) {
     return NS_OK;
   }
@@ -12062,7 +12063,7 @@ nsresult nsDocShell::EnsureEditorData() {
     // we're shutting down, or we already have a detached editor data
     // stored in the session history. We should only have one editordata
     // per docshell.
-    mEditorData = MakeUnique<nsDocShellEditorData>(this);
+    mEditorData = std::make_unique<nsDocShellEditorData>(this);
   }
 
   return mEditorData ? NS_OK : NS_ERROR_NOT_AVAILABLE;
@@ -12792,7 +12793,7 @@ nsresult nsDocShell::OnLinkClickSync(nsIContent* aContent,
 }
 
 nsresult nsDocShell::OnOverLink(nsIContent* aContent, nsIURI* aURI,
-                                const nsAString& aTargetSpec) {
+                                const nsAString& /*aTargetSpec*/) {
   if (aContent->IsEditable()) {
     return NS_OK;
   }
@@ -13194,7 +13195,7 @@ nsresult nsIDocShell::SetHTMLEditor(HTMLEditor* aHTMLEditor) {
 NS_IMETHODIMP
 nsDocShell::SetColorMatrix(const nsTArray<float>& aMatrix) {
   if (aMatrix.Length() == MATRIX_LENGTH) {
-    mColorMatrix = MakeUnique<gfx::Matrix5x4>();
+    mColorMatrix = std::make_unique<gfx::Matrix5x4>();
     static_assert(
         MATRIX_LENGTH * sizeof(float) == sizeof(mColorMatrix->components),
         "Size mismatch for our memcpy");
@@ -13310,7 +13311,7 @@ void nsDocShell::SetLoadingSessionHistoryInfo(
   MOZ_LOG(gSHLog, LogLevel::Debug,
           ("Setting the loading entry on nsDocShell %p to %s", this,
            aLoadingInfo.mInfo.GetURI()->GetSpecOrDefault().get()));
-  mLoadingEntry = MakeUnique<LoadingSessionHistoryInfo>(aLoadingInfo);
+  mLoadingEntry = std::make_unique<LoadingSessionHistoryInfo>(aLoadingInfo);
   mNeedToReportActiveAfterLoadingBecomesActive =
       aNeedToReportActiveAfterLoadingBecomesActive;
 }
@@ -13329,7 +13330,7 @@ void nsDocShell::MoveLoadingToActiveEntry(bool aExpired, uint32_t aCacheKey,
             ("Moving the loading entry to the active entry on nsDocShell %p "
              "to %s",
              this, mLoadingEntry->mInfo.GetURI()->GetSpecOrDefault().get()));
-    mActiveEntry = MakeUnique<SessionHistoryInfo>(mLoadingEntry->mInfo);
+    mActiveEntry = std::make_unique<SessionHistoryInfo>(mLoadingEntry->mInfo);
     mLoadingEntry.swap(loadingEntry);
     if (!mActiveEntryIsLoadingFromSessionHistory) {
       if (mNeedToReportActiveAfterLoadingBecomesActive) {

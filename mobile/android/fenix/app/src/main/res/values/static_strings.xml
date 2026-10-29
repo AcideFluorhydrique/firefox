@@ -111,6 +111,8 @@
     <string name="preferences_debug_settings_show_more_shortcuts" translatable="false">Show More Shortcuts</string>
     <!-- Label for enabling Homepage Weather Widget -->
     <string name="preferences_debug_settings_homepage_weather_widget" translatable="false">Enable Homepage Weather Widget</string>
+    <!-- Label for enabling Homepage Wrexham Widget -->
+    <string name="preferences_debug_settings_homepage_wrexham_widget" translatable="false">Enable Homepage Wrexham Widget</string>
     <!-- Label for enabling Mozilla Ads Client for Sponsored Stories -->
     <string name="preferences_debug_settings_ads_client_for_stories" translatable="false">Enable Ads Client for Stories</string>
     <!-- Label for enabling the custom tab extension -->
@@ -140,9 +142,11 @@
     <!-- Label for enabling listen to page -->
     <string name="preferences_key_enable_listen_to_page" translatable="false">Enable Listen to Page Feature Flag</string>
     <!-- Label for enabling the weekly privacy notification -->
-    <string name="preferences_debug_settings_privacy_report_notification" translatable="false">Enable Weekly Privacy Notification Feature</string>
+    <string name="preferences_debug_settings_privacy_report_notification" translatable="false">Enable Weekly Privacy Report Notification Feature</string>
     <!-- Label for forcing the weekly privacy report notification to show, with a fixed count of blocked trackers -->
-    <string name="preferences_debug_settings_force_weekly_privacy_report_notification" translatable="false">Force weekly privacy report notification trackers over threshold</string>
+    <string name="preferences_debug_settings_force_weekly_privacy_report_notification_title" translatable="false">Show Tracker Count in Weekly Privacy Report Notification</string>
+    <!-- Label for forcing the weekly privacy report notification to show, with a fixed count of blocked trackers -->
+    <string name="preferences_debug_settings_force_weekly_privacy_report_notification_summary" translatable="false">When enabled, sets blocked trackers to 48 to show the \“48 trackers blocked this week\” notification. When disabled, shows the \"feature prompt\" notification.</string>
     <!-- Label for enabling remote search configuration -->
     <string name="preferences_debug_settings_remote_search_configuration" translatable="false">Enable Remote Search Configuration (requires restart)</string>
     <!-- Label for selecting the search-config-v3 Remote Settings collection -->
@@ -231,6 +235,9 @@
     <string name="preferences_debug_settings_use_account_settings_new_ui" translatable="false">Use new Account Settings UI</string>
 
     <string name="preferences_debug_settings_enable_sync_decoupling" translatable="false">Enable accounts - sync decoupling (requires restart)</string>
+
+    <!-- Label for using the open links in YouTube app preference in secret settings. -->
+    <string name="preferences_debug_settings_open_links_in_youtube" translatable="false">Open links in YouTube app preference</string>
 
   <!-- Label for the defaults section and reset action in secret settings. -->
     <string name="preferences_debug_settings_reset_defaults" translatable="false">Reset switches to defaults</string>
@@ -449,6 +456,8 @@
 
     <!-- Label for the Customize Home preference to show the weather widget on the homepage. -->
     <string name="customize_toggle_weather" translatable="false">Weather</string>
+    <!-- Label for the Customize Home preference to show the Wrexham widget on the homepage. -->
+    <string name="customize_toggle_wrexham_widget" translatable="false">Wrexham Widget</string>
 
     <!--  Firefox brand name  -->
     <string name="app_name_firefox" tools:ignore="BrandUsage">Firefox</string>

@@ -97,7 +97,7 @@ UniquePtr<RenderCompositor> RenderCompositorOGLSWGL::Create(
     return nullptr;
   }
 
-  return MakeUnique<RenderCompositorOGLSWGL>(compositor, aWidget, ctx);
+  return std::make_unique<RenderCompositorOGLSWGL>(compositor, aWidget, ctx);
 }
 
 RenderCompositorOGLSWGL::RenderCompositorOGLSWGL(
@@ -291,7 +291,7 @@ RenderCompositorOGLSWGL::DoCreateTile(Surface* aSurface) {
   auto source = MakeRefPtr<TextureImageTextureSourceOGL>(
       mCompositor->AsCompositorOGL(), layers::TextureFlags::NO_FLAGS);
 
-  return MakeUnique<TileOGL>(std::move(source), aSurface->TileSize());
+  return std::make_unique<TileOGL>(std::move(source), aSurface->TileSize());
 }
 
 bool RenderCompositorOGLSWGL::MaybeReadback(
@@ -352,7 +352,7 @@ bool RenderCompositorOGLSWGL::MaybeCaptureScreenPixels(
 
     uint8_t* destBuf = nullptr;
     if (aHardwareBuffer->Lock(AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN, nullptr,
-                              reinterpret_cast<void**>(&destBuf)) < 0) {
+                              reinterpret_cast<void**>(&destBuf))) {
       return true;
     }
     const auto hardwareBufferUnlock =
@@ -507,7 +507,7 @@ bool RenderCompositorOGLSWGL::TileOGL::Map(wr::DeviceIntRect aDirtyRect,
       return false;
     }
     // Verify that we're not somehow using a PBOUnpackSurface.
-    MOZ_ASSERT(map.mData != nullptr);
+    MOZ_RELEASE_ASSERT(map.mData != nullptr);
     // glTex(Sub)Image on ES doesn't support arbitrary strides without
     // the EXT_unpack_subimage extension. To avoid needing to make a
     // copy of the data we'll always draw it with stride = bpp*width

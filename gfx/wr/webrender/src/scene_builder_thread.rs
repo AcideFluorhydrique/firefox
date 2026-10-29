@@ -10,7 +10,6 @@ use api::interning::DlDelta;
 use api::channel::{unbounded_channel, single_msg_channel, Receiver, Sender};
 use api::units::*;
 use crate::render_api::{ApiMsg, FrameMsg, SceneMsg, ResourceUpdate, TransactionMsg, MemoryReport};
-use crate::box_shadow::BoxShadow;
 #[cfg(feature = "capture")]
 use crate::capture::CaptureConfig;
 use crate::frame_builder::FrameBuilderConfig;
@@ -26,7 +25,6 @@ use crate::prim_store::backdrop::{BackdropCapture, BackdropRender};
 use crate::prim_store::borders::{ImageBorder, NormalBorderPrim};
 use crate::prim_store::gradient::{LinearGradient, RadialGradient, ConicGradient};
 use crate::prim_store::image::{Image, YuvImage};
-use crate::prim_store::line_dec::LineDecoration;
 use crate::prim_store::picture::Picture;
 use crate::prim_store::text_run::TextRun;
 use crate::profiler::{self, TransactionProfile};
@@ -729,6 +727,7 @@ impl SceneBuilderThread {
                     &SceneStats::empty(),
                     self.debug_flags,
                 ));
+                item.scene.mark_built(&built_scene.as_ref().unwrap().walked_pipelines);
 
                 interner_updates = Some(
                     item.interners.end_frame_and_get_pending_updates()
@@ -965,6 +964,7 @@ impl SceneBuilderThread {
                         self.debug_flags,
                     );
                     let spatial_tree_updates = spatial_tree.end_frame_and_get_pending_updates();
+                    scene.mark_built(&built.walked_pipelines);
                     embed_policy_violations.extend_from_slice(&built.embed_policy_violations);
                     offscreen_scenes.push(OffscreenBuiltScene {
                         scene: built,
@@ -1031,6 +1031,8 @@ impl SceneBuilderThread {
                 &doc.stats,
                 self.debug_flags,
             );
+
+            scene.mark_built(&built.walked_pipelines);
 
             // Update the allocation stats for next scene
             doc.stats = built.get_stats();

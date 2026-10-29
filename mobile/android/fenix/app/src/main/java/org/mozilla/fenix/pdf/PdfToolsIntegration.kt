@@ -62,10 +62,16 @@ class PdfToolsIntegration(
     private var scope: CoroutineScope? = null
     private var pdfTabId by mutableStateOf(browserStore.state.selectedPdfTabId)
     private var isSigning by mutableStateOf(false)
+    private var isAddingSignature by mutableStateOf(false)
     private val signature = TextFieldState()
 
     internal val signatureState: SignatureState
-        get() = SignatureState(isSigning = isSigning, signature = signature)
+        get() =
+            SignatureState(
+                isSigning = isSigning,
+                isAddingSignature = isAddingSignature,
+                signature = signature,
+            )
 
     internal val toolActions =
         PdfToolActions(
@@ -136,6 +142,7 @@ class PdfToolsIntegration(
         scope = null
 
         container.pageContent?.accessibilityTraversalAfter = View.NO_ID
+        container.addressBar?.accessibilityTraversalAfter = View.NO_ID
         overlays.forEach(container::removeView)
         overlays = emptyList()
     }
@@ -192,7 +199,7 @@ class PdfToolsIntegration(
     }
 
     /**
-     * Ensures the screenreader focus order shows the PDF tools before the content.
+     * Ensures the screenreader focus order shows the PDF tools between the address bar and the content.
      *
      * @param tools The PDF tools overlay.
      * @param dialog The signature dialog overlay.
@@ -201,9 +208,15 @@ class PdfToolsIntegration(
         val addressBar = container.addressBar ?: return
         val pageContent = container.pageContent ?: return
 
-        tools.accessibilityTraversalAfter = addressBar.id
-        dialog.accessibilityTraversalAfter = tools.id
-        pageContent.accessibilityTraversalAfter = dialog.id
+        if (isAddressBarAtBottom) {
+            tools.accessibilityTraversalAfter = pageContent.id
+            dialog.accessibilityTraversalAfter = tools.id
+            addressBar.accessibilityTraversalAfter = dialog.id
+        } else {
+            tools.accessibilityTraversalAfter = addressBar.id
+            dialog.accessibilityTraversalAfter = tools.id
+            pageContent.accessibilityTraversalAfter = dialog.id
+        }
     }
 
     /** Opens the dialog for adding a signature to the PDF. */
@@ -222,6 +235,10 @@ class PdfToolsIntegration(
 
     /** Adds the typed signature to the PDF and closes the dialog. */
     internal fun handleSignAddClick() {
+        if (!isSigning || isAddingSignature) {
+            return
+        }
+
         PdfViewer.signDialogAddTapped.record(
             PdfViewer.SignDialogAddTappedExtra(signatureType = SignatureType.Typed.telemetryName)
         )
@@ -238,13 +255,16 @@ class PdfToolsIntegration(
             return
         }
 
+        isAddingSignature = true
         engineSession.addSignatureToPdf(
             text = signature.text.toString(),
             onResult = {
                 PdfViewer.signDialogAddCompleted.record(
                     PdfViewer.SignDialogAddCompletedExtra(signatureType = SignatureType.Typed.telemetryName)
                 )
-                dismissSignatureDialog()
+                if (isAddingSignature) {
+                    dismissSignatureDialog()
+                }
             },
             onException = {
                 PdfViewer.signDialogAddFailure.record(
@@ -253,14 +273,20 @@ class PdfToolsIntegration(
                         signatureType = SignatureType.Typed.telemetryName,
                     )
                 )
-                dismissSignatureDialog()
+                if (isAddingSignature) {
+                    dismissSignatureDialog()
+                }
             },
         )
     }
 
-    /** Closes the dialog and discards the signature. */
+    /** Closes the dialog. If the signature is processing, it will keep the signature state. */
     internal fun handleSignCloseClick() {
-        dismissSignatureDialog()
+        if (isAddingSignature) {
+            isSigning = false
+        } else {
+            dismissSignatureDialog()
+        }
         PdfViewer.signDialogCloseTapped.record(
             PdfViewer.SignDialogCloseTappedExtra(signatureType = SignatureType.Typed.telemetryName)
         )
@@ -276,6 +302,7 @@ class PdfToolsIntegration(
 
     private fun dismissSignatureDialog() {
         isSigning = false
+        isAddingSignature = false
         signature.clearText()
     }
 

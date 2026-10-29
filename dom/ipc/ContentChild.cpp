@@ -32,6 +32,9 @@
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/PerfStats.h"
 #include "mozilla/Preferences.h"
+#ifdef MOZ_WIDGET_ANDROID
+#  include "mozilla/ProcInfoChild.h"
+#endif
 #include "mozilla/ProcessHangMonitorIPC.h"
 #include "mozilla/RemoteLazyInputStreamChild.h"
 #include "mozilla/RemoteMediaManagerChild.h"
@@ -1560,6 +1563,14 @@ mozilla::ipc::IPCResult ContentChild::RecvInitProfiler(
   return IPC_OK();
 }
 
+#ifdef MOZ_WIDGET_ANDROID
+mozilla::ipc::IPCResult ContentChild::RecvInitProcInfo(
+    Endpoint<PProcInfoChild>&& aEndpoint) {
+  ProcInfoChild::Create(std::move(aEndpoint));
+  return IPC_OK();
+}
+#endif
+
 mozilla::ipc::IPCResult ContentChild::RecvGMPsChanged(
     nsTArray<GMPCapabilityData>&& capabilities) {
   GeckoMediaPluginServiceChild::UpdateGMPCapabilities(std::move(capabilities));
@@ -2831,9 +2842,11 @@ mozilla::ipc::IPCResult ContentChild::RecvInitBlobURLs(
     nsTArray<BlobURLRegistrationData>&& aRegistrations) {
   for (uint32_t i = 0; i < aRegistrations.Length(); ++i) {
     BlobURLRegistrationData& registration = aRegistrations[i];
-    BlobURLProtocolHandler::AddDataEntryChild(registration.url(),
-                                              registration.principal(),
-                                              registration.partitionKey());
+    if (NS_FAILED(BlobURLProtocolHandler::AddDataEntryChild(
+            registration.url(), registration.principal(),
+            registration.partitionKey()))) {
+      return IPC_FAIL(this, "Conflicting Blob URL principal");
+    }
     // If we have received an already-revoked blobURL, we have to keep it alive
     // for a while (see BlobURLProtocolHandler) in order to support pending
     // operations such as navigation, download and so on.
@@ -3273,7 +3286,10 @@ mozilla::ipc::IPCResult ContentChild::RecvPWebBrowserPersistDocumentConstructor(
 mozilla::ipc::IPCResult ContentChild::RecvBlobURLRegistration(
     const nsCString& aURI, nsIPrincipal* aPrincipal,
     const nsCString& aPartitionKey) {
-  BlobURLProtocolHandler::AddDataEntryChild(aURI, aPrincipal, aPartitionKey);
+  if (NS_FAILED(BlobURLProtocolHandler::AddDataEntryChild(aURI, aPrincipal,
+                                                          aPartitionKey))) {
+    return IPC_FAIL(this, "Conflicting Blob URL principal");
+  }
   return IPC_OK();
 }
 
@@ -4689,6 +4705,7 @@ mozilla::ipc::IPCResult ContentChild::RecvDeactivateDocuments(
   }
   BrowsingContext* browsingContext = aContext.get();
   MOZ_DIAGNOSTIC_ASSERT(browsingContext->IsTopContent());
+  MOZ_DIAGNOSTIC_ASSERT(browsingContext->IsInProcess() || !aPageSwapTargetInfo);
 
   browsingContext->DeactivateDocuments(aPageSwapTargetInfo.ptrOr(nullptr),
                                        aNavigationType, aForUnload);

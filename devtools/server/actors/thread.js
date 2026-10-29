@@ -1203,9 +1203,7 @@ class ThreadActor extends Actor {
    */
   async _handleResumeLimit({ resumeLimit, frameActorID }) {
     const steppingType = resumeLimit.type;
-    if (
-      !["break", "step", "next", "finish", "restart"].includes(steppingType)
-    ) {
+    if (!["step", "next", "finish", "restart"].includes(steppingType)) {
       return Promise.reject({
         error: "badParameterType",
         message: "Unknown resumeLimit type",
@@ -1262,7 +1260,6 @@ class ThreadActor extends Actor {
     if (stepFrame) {
       switch (steppingType) {
         case "step":
-        case "break":
         case "next":
           if (stepFrame.script) {
             if (!this.sourcesManager.isFrameBlackBoxed(stepFrame)) {
@@ -1334,7 +1331,7 @@ class ThreadActor extends Actor {
         this._clearSteppingHooks();
       }
 
-      this.doResume({ resumeLimit });
+      this.doResume();
       return {};
     } catch (error) {
       return error instanceof Error

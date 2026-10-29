@@ -555,7 +555,7 @@ AsyncPanZoomAnimation* PlatformSpecificStateBase::CreateFlingAnimation(
 
 UniquePtr<VelocityTracker> PlatformSpecificStateBase::CreateVelocityTracker(
     Axis* aAxis) {
-  return MakeUnique<SimpleVelocityTracker>(aAxis);
+  return std::make_unique<SimpleVelocityTracker>(aAxis);
 }
 
 // This is a helper class for populating
@@ -827,7 +827,7 @@ void AsyncPanZoomController::InitializeGlobalState() {
   if (sInitialized) return;
   sInitialized = true;
 
-  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
   gZoomAnimationFunction = new StyleComputedTimingFunction(
       StyleComputedTimingFunction::Keyword(StyleTimingKeyword::Ease));
@@ -873,7 +873,7 @@ AsyncPanZoomController::AsyncPanZoomController(
                            ViewportMaxScale() / ParentLayerToScreenScale(1)),
       mLastSampleTime(GetFrameTime()),
       mLastCheckerboardReport(GetFrameTime()),
-      mOverscrollEffect(MakeUnique<OverscrollEffect>(*this)),
+      mOverscrollEffect(std::make_unique<OverscrollEffect>(*this)),
       mState(NOTHING),
       mX(this),
       mY(this),
@@ -896,7 +896,7 @@ AsyncPanZoomController::~AsyncPanZoomController() { MOZ_ASSERT(IsDestroyed()); }
 
 PlatformSpecificStateBase* AsyncPanZoomController::GetPlatformSpecificState() {
   if (!mPlatformSpecificState) {
-    mPlatformSpecificState = MakeUnique<PlatformSpecificState>();
+    mPlatformSpecificState = std::make_unique<PlatformSpecificState>();
   }
   return mPlatformSpecificState.get();
 }
@@ -4873,7 +4873,7 @@ void AsyncPanZoomController::RequestContentRepaint(
     return;
   }
 
-  MOZ_ASSERT(controller->IsRepaintThread());
+  MOZ_RELEASE_ASSERT(controller->IsRepaintThread());
 
   RecursiveMutexAutoLock lock(mRecursiveMutex);
   ParentLayerPoint velocity = GetVelocityVector();
@@ -4910,7 +4910,7 @@ void AsyncPanZoomController::RequestContentRepaint(
   if (!controller) {
     return;
   }
-  MOZ_ASSERT(controller->IsRepaintThread());
+  MOZ_RELEASE_ASSERT(controller->IsRepaintThread());
 
   APZScrollAnimationType animationType = APZScrollAnimationType::No;
   if (mAnimation) {
@@ -5569,7 +5569,7 @@ void AsyncPanZoomController::ReportCheckerboard(
 
   MutexAutoLock lock(mCheckerboardEventLock);
   if (!mCheckerboardEvent && (recordTrace || forTelemetry)) {
-    mCheckerboardEvent = MakeUnique<CheckerboardEvent>(recordTrace);
+    mCheckerboardEvent = std::make_unique<CheckerboardEvent>(recordTrace);
   }
   mPotentialCheckerboardTracker.InTransform(inTransformingState,
                                             recordTrace || forTelemetry);

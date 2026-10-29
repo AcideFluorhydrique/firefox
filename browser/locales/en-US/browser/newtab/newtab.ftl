@@ -239,10 +239,11 @@ newtab-empty-section-topstories-generic = You’ve caught up. Check back later f
 
 newtab-discovery-empty-section-topstories-header = You are caught up!
 newtab-discovery-empty-section-topstories-content = Check back later for more stories.
-newtab-discovery-empty-section-topstories-try-again-button = Try Again
+newtab-discovery-empty-section-topstories-try-again-button = Try again
 newtab-discovery-empty-section-topstories-loading = Loading…
-# Displays when a layout in a section took too long to fetch articles.
-newtab-discovery-empty-section-topstories-timed-out = Oops! We almost loaded this section, but not quite.
+# Headline and body shown when stories fail to load, for example when offline or the server can’t be reached.
+newtab-discovery-empty-section-topstories-unavailable-header = Stories aren’t available right now
+newtab-discovery-empty-section-topstories-unavailable-body = Check your connection or try again later.
 
 ## Strings for the story cards carousel
 
@@ -578,9 +579,14 @@ newtab-weather-menu-change-location = Change location
 newtab-weather-change-location-search-input-placeholder =
     .placeholder = Search location
     .aria-label = Search location
-newtab-weather-cancel-input =
-    .title = Cancel
-    .aria-label = Cancel
+# "Back" is an icon-only button next to the location search field that returns to the widget.
+newtab-weather-search-back-button =
+    .title = Back
+    .aria-label = Back
+# Screen reader label for the dropdown below the location search field that
+# lists matching locations as the user types.
+newtab-weather-location-search-results =
+    .aria-label = Location suggestions
 # "Current" refers to the user's physical/geographic location detected via geolocation.
 newtab-weather-change-location-search-use-current =
     .label = Use current location
@@ -952,14 +958,9 @@ newtab-crossword-widget-open-menu-button =
     .title = Open crossword menu
     .aria-label = Open crossword menu
 
-## World Cup wallpaper OMC messages
-## Shown as on-screen messages promoting the World Cup wallpapers.
-
-newtab-sports-widget-message-wallpapers-title = Kick off the World Cup with new wallpapers
-newtab-sports-widget-message-wallpapers-body = Bring some match-day energy to your browser for the tournament.
-newtab-sports-widget-message-wallpapers-cta = Choose wallpaper
-newtab-sports-widget-message-wallpapers-semifinals-title = Get a new wallpaper for the semi-finals
-newtab-sports-widget-message-wallpapers-semifinals-body = Set the stage for the World Cup’s biggest matches.
+# Context menu item linking to the Particle website, the provider of the
+# crossword. “Particle” is a brand name and should not be translated.
+newtab-crossword-menu-powered-by-particle = Powered by Particle
 
 ## Strings introduced by the Nova redesign of the Timer widget
 
@@ -1063,8 +1064,11 @@ newtab-clock-widget-menu-edit = Edit clocks
 newtab-clock-widget-menu-switch-to-12h = Switch to 12-hour format
 newtab-clock-widget-menu-switch-to-24h = Switch to 24-hour format
 newtab-clock-widget-label-your-clocks = Your clocks
-newtab-clock-widget-search-location-input =
-    .label = Location
+# "Back" is an icon-only button next to the city search field form that returns to the list of clocks.
+newtab-clock-widget-search-back-button =
+    .title = Back
+    .aria-label = Back
+newtab-clock-widget-search-location-input2 =
     .placeholder = Search for a city
     .aria-label = Search for a city
 # "Nickname (optional)" refers to a custom, user-defined label for a saved location
@@ -1790,6 +1794,10 @@ newtab-travel-widget-open-menu-button =
 
 # Context menu item linking to more information about the widget.
 newtab-travel-menu-learn-more = Learn more
+
+# Context menu item linking to the Kayak website, the provider of the
+# travel search. “Kayak” is a brand name and should not be translated.
+newtab-travel-menu-powered-by-kayak = Powered by Kayak
 
 ## Strings for the Solitaire widget. Solitaire is a widget on New Tab where you
 ## can play solitaire, a card game for one player, also known as patience.

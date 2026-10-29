@@ -99,6 +99,7 @@
 #include "mozilla/PresShellInlines.h"
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/PseudoStyleType.h"
+#include "mozilla/RandomNum.h"
 #include "mozilla/RelativeTo.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ReverseIterator.h"
@@ -705,7 +706,7 @@ bool IdentifierMapEntry::HasWindowNameElement() const {
 void IdentifierMapEntry::AddContentChangeCallback(
     Document::IDTargetObserver aCallback, void* aData, bool aForImage) {
   if (!mChangeCallbacks) {
-    mChangeCallbacks = MakeUnique<nsTHashtable<ChangeCallbackEntry>>();
+    mChangeCallbacks = std::make_unique<nsTHashtable<ChangeCallbackEntry>>();
   }
 
   ChangeCallback cc = {aCallback, aData, aForImage};
@@ -1170,7 +1171,7 @@ nsresult ExternalResourceMap::AddExternalResource(nsIURI* aURI,
   }
 
   ExternalResource* newResource =
-      mMap.InsertOrUpdate(aURI, MakeUnique<ExternalResource>()).get();
+      mMap.InsertOrUpdate(aURI, std::make_unique<ExternalResource>()).get();
 
   newResource->mDocument = doc;
   newResource->mViewer = aViewer;
@@ -1607,6 +1608,7 @@ Document::Document(const char* aContentType,
       mDefaultElementType(0),
       mAllowXULXBL(eTriUnset),
       mSkipDTDSecurityChecks(false),
+      mRandomHasherKey{RandomUint64OrDie(), RandomUint64OrDie()},
       mBidiOptions(IBMBIDI_DEFAULT_BIDI_OPTIONS),
       mSandboxFlags(0),
       mPartID(0),
@@ -2487,6 +2489,17 @@ void Document::AccumulatePageLoadTelemetry() {
       // capturing the impact of early connection establishment.
       mPageloadEventData.set_timeToRequestStart(0);
     }
+  }
+
+  // connectStart is null when the document reused an existing connection.
+  TimeStamp connectStart;
+  timedChannel->GetConnectStart(&connectStart);
+  if (connectStart) {
+    TimeDuration timeToConnectStart = connectStart - navigationStart;
+    mPageloadEventData.set_timeToConnectStart(
+        timeToConnectStart > zeroDuration
+            ? static_cast<uint32_t>(timeToConnectStart.ToMilliseconds())
+            : 0);
   }
 
   TimeStamp secureConnectStart;
@@ -7682,7 +7695,7 @@ void Document::SetHeaderData(nsAtom* aHeaderField, const nsAString& aData) {
 
   if (!mHeaderData) {
     if (!aData.IsEmpty()) {  // don't bother storing empty string
-      mHeaderData = MakeUnique<HeaderData>(aHeaderField, aData);
+      mHeaderData = std::make_unique<HeaderData>(aHeaderField, aData);
     }
   } else {
     HeaderData* data = mHeaderData.get();
@@ -7707,7 +7720,7 @@ void Document::SetHeaderData(nsAtom* aHeaderField, const nsAString& aData) {
 
     if (!aData.IsEmpty() && !found) {
       // didn't find, append
-      *lastPtr = MakeUnique<HeaderData>(aHeaderField, aData);
+      *lastPtr = std::make_unique<HeaderData>(aHeaderField, aData);
     }
   }
 
@@ -10589,7 +10602,7 @@ SMILAnimationController* Document::GetAnimationController() {
 
 SpeculationRulesManager* Document::EnsureSpeculationRulesManager() {
   if (!mSpeculationRulesManager) {
-    mSpeculationRulesManager = MakeUnique<SpeculationRulesManager>();
+    mSpeculationRulesManager = std::make_unique<SpeculationRulesManager>();
   }
   return mSpeculationRulesManager.get();
 }
@@ -12210,8 +12223,9 @@ void Document::RecomputeColorScheme() {
   }
 
   if (nsPresContext* pc = GetPresContext()) {
-    // This affects system colors, which are inherited, so we need to recascade.
-    pc->RebuildAllStyleData(nsChangeHint(0), RestyleHint::RecascadeSubtree());
+    pc->MediaFeatureValuesChanged(
+        MediaFeatureChange::ForPreferredColorSchemeOrForcedColorsChange(),
+        MediaFeatureChangePropagation::JustThisDocument);
   }
 }
 
@@ -13120,8 +13134,8 @@ void Document::OnPageShow(bool aPersisted, EventTarget* aDispatchStartTarget,
 }
 
 static void DispatchFullscreenChange(Document& aDocument, nsINode* aTarget) {
-  aDocument.AddPendingFullscreenEvent(
-      MakeUnique<PendingFullscreenEvent>(FullscreenEventType::Change, aTarget));
+  aDocument.AddPendingFullscreenEvent(std::make_unique<PendingFullscreenEvent>(
+      FullscreenEventType::Change, aTarget));
 }
 
 void Document::OnPageHide(bool aPersisted, EventTarget* aDispatchStartTarget,
@@ -14521,7 +14535,7 @@ void Document::ScrollToRef() {
 
 void Document::RegisterActivityObserver(nsISupports* aSupports) {
   if (!mActivityObservers) {
-    mActivityObservers = MakeUnique<nsTHashSet<nsISupports*>>();
+    mActivityObservers = std::make_unique<nsTHashSet<nsISupports*>>();
   }
   mActivityObservers->Insert(aSupports);
 }
@@ -14717,7 +14731,7 @@ static void CachePrintSelectionRanges(const Document& aSourceDoc,
 
   const uint32_t rangeCount =
       sourceDocIsStatic ? origRanges->Length() : origSelection->RangeCount();
-  auto printRanges = MakeUnique<nsTArray<RefPtr<Range>>>(rangeCount);
+  auto printRanges = std::make_unique<nsTArray<RefPtr<Range>>>(rangeCount);
 
   for (const uint32_t i : IntegerRange(rangeCount)) {
     MOZ_ASSERT_IF(!sourceDocIsStatic,
@@ -14856,13 +14870,13 @@ void Document::UnlinkOriginalDocumentIfStatic() {
   MOZ_ASSERT(!mOriginalDocument);
 }
 
-uintptr_t Document::GetRandomSeed() const {
-  // If the document is a static clone, uses the original document's address.
-  // Otherwise, uses this document's address as its random seed.
+const Array<uint64_t, 2>& Document::GetRandomHasherKey() const {
+  // If the document is a static clone, uses the original document's key.
+  // Otherwise, uses this document's key.
   if (const Document* original = GetOriginalDocument()) {
-    return reinterpret_cast<uintptr_t>(original);
+    return original->mRandomHasherKey;
   }
-  return reinterpret_cast<uintptr_t>(this);
+  return mRandomHasherKey;
 }
 
 nsresult Document::ScheduleFrameRequestCallback(FrameRequestCallback& aCallback,
@@ -20477,7 +20491,7 @@ void Document::AddExpectedInternalResourceTarget(nsAtom* aFragment) {
   mExpectedInternalResourceTargets.LookupOrInsert(aFragment, 0) += 1;
   if (!mExpectedInternalResourceTargetsBloom) {
     mExpectedInternalResourceTargetsBloom =
-        MakeUnique<mozilla::CountingBloomFilter<8, nsAtom>>();
+        std::make_unique<mozilla::CountingBloomFilter<8, nsAtom>>();
   }
   mExpectedInternalResourceTargetsBloom->add(aFragment->hash());
 }
@@ -21751,12 +21765,30 @@ ColorScheme Document::DefaultColorScheme() const {
 }
 
 ColorScheme Document::PreferredColorScheme(IgnoreRFP aIgnoreRFP) const {
+  nsPresContext* pc = GetPresContext();
+  const bool printing = pc && pc->Medium() == nsGkAtoms::print;
+  if (auto flags = StyleColorSchemeFlags{GetColorSchemeBits()};
+      flags &&
+      (ChromeRulesEnabled() ||
+       StaticPrefs::layout_css_prefers_color_scheme_meta_tag_enabled())) {
+    const bool supportsDark(flags & StyleColorSchemeFlags::DARK);
+    const bool supportsLight(flags & StyleColorSchemeFlags::LIGHT);
+    const bool only(flags & StyleColorSchemeFlags::ONLY);
+    if (supportsDark != supportsLight && (!printing || only)) {
+      return supportsDark ? ColorScheme::Dark : ColorScheme::Light;
+    }
+  }
+
+  if (printing) {
+    return ColorScheme::Light;
+  }
+
   if (ShouldResistFingerprinting(RFPTarget::CSSPrefersColorScheme) &&
       aIgnoreRFP == IgnoreRFP::No) {
     return ColorScheme::Light;
   }
 
-  if (nsPresContext* pc = GetPresContext()) {
+  if (pc) {
     if (auto scheme = pc->GetOverriddenOrEmbedderColorScheme()) {
       return *scheme;
     }

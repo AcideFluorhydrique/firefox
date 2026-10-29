@@ -30,8 +30,12 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 // Each attempt re-imports the whole profile, so a store that can never be
-// written must not pay that on every startup.
-const MAX_ATTEMPTS = 3;
+// written must not pay that on every startup. Budgets the real migration and
+// the dry run separately.
+export const MAX_ATTEMPTS = 10;
+
+// The error_code of a copy into Rust whose source was written to while it ran.
+const SOURCE_CHANGED = "SourceChanged";
 
 // Twelve or more base64 characters including at least one digit: a guid. The
 // digit is what keeps CamelCase error type names out of the match.
@@ -39,12 +43,13 @@ const GUID_LIKE = /\b(?=[A-Za-z0-9+/]*[0-9])[A-Za-z0-9+/]{12,}\b/g;
 
 // A failure is reported as a code to group on and a message to read. The
 // message is free text -- a store's own error can name the record it was
-// writing -- so blank the guids out of it and cap it.
+// writing -- so blank the guids out of it and cap it. An XPCOM exception can
+// carry an empty message, and then its result name is what says why.
 const errorCodeOf = e =>
   e instanceof lazy.AutofillApiError ? e.constructor.name : "Unknown";
 
 const errorTextOf = e =>
-  String(e?.message ?? e)
+  String(e?.message || e?.name || e)
     .replace(GUID_LIKE, "<id>")
     .slice(0, 200);
 
@@ -60,9 +65,10 @@ const errorTextOf = e =>
  * A subclass supplies what differs by collection, as getters rather than
  * instance fields so they are readable from here:
  *
- *  - `config` (static), holding metrics, rustAdapter, testVersionPref, testVersion and
- *    attemptsPref. Rebuilt on each read, so the Glean category and the lazy
- *    module getters inside it resolve at call time rather than at load.
+ *  - `config` (static), holding metrics, rustAdapter, collectionName,
+ *    testVersionPref, testVersion, testAttemptsPref and attemptsPref. Rebuilt
+ *    on each read, so the Glean category and the lazy module getters inside it
+ *    resolve at call time rather than at load.
  *  - `logger`.
  *  - the `isStoredField()` method, and `fieldDiffers()` if the collection has a
  *    field that does not compare as a string.
@@ -109,16 +115,31 @@ export class AutofillStorageMigrator {
   }
 
   /**
+   * Whether the real copy now owed -- into Rust, or back to JSON -- has failed
+   * MAX_ATTEMPTS times and will not be tried again. Dry runs are counted
+   * separately, on testAttemptsPref.
+   *
+   * @returns {boolean}
+   */
+  static get attemptsExhausted() {
+    const { attemptsPref } = this.config;
+    return Services.prefs.getIntPref(attemptsPref, 0) >= MAX_ATTEMPTS;
+  }
+
+  /**
    * Copy the records across, unless this profile has spent its attempts.
    *
    * Divergence is measured and reported, not acted on: a complete copy is the
-   * only bar.
+   * only bar. A source written to while a copy into Rust ran fails it too, as
+   * the write is in the source and may not be in the target.
    *
    * @param {object} [options]
    * @param {boolean} [options.dryRun=false] Copy only to measure it: reports
-   *   the run, empties the target again, returns false whatever the outcome,
-   *   and records _testVersion so the same generation never measures twice.
-   *   Spends no attempt budget.
+   *   the run, empties the target again and returns false whatever the
+   *   outcome. A failed run is retried on later launches, counted on
+   *   testAttemptsPref rather than attemptsPref; once it succeeds or spends
+   *   MAX_ATTEMPTS, testVersion is recorded so the same generation never
+   *   measures again.
    * @param {boolean} [options.wipe=true] Empty the target first. See #migrate.
    * @returns {Promise<boolean>} Whether the copy completed. Always false for a
    *   dry run.
@@ -129,20 +150,27 @@ export class AutofillStorageMigrator {
         if (!this.constructor.dryRunPending) {
           return false;
         }
-        await this.#migrateAndReport({ wipe });
+        const { testVersionPref, testVersion, testAttemptsPref } = this.config;
+        this.#attempt = Services.prefs.getIntPref(testAttemptsPref, 0);
+        const { ok } = await this.#migrateAndReport({ wipe });
         // Measured, not read: put the target back the way it was found. Safe to
         // empty because nothing is serving from it -- the dry run only runs
         // while rust.enabled is off -- and the run is recorded on its own pref,
         // so a later real migration still does its own copy.
         await this.wipe();
-        const { testVersionPref, testVersion } = this.config;
-        Services.prefs.setIntPref(testVersionPref, testVersion);
+        const next = this.#attempt + 1;
+        if (ok || next >= MAX_ATTEMPTS) {
+          Services.prefs.setIntPref(testVersionPref, testVersion);
+          Services.prefs.clearUserPref(testAttemptsPref);
+        } else {
+          Services.prefs.setIntPref(testAttemptsPref, next);
+        }
         return false;
       }
 
       const { attemptsPref } = this.config;
       this.#attempt = Services.prefs.getIntPref(attemptsPref, 0);
-      if (this.#attempt >= MAX_ATTEMPTS) {
+      if (this.constructor.attemptsExhausted) {
         this.logger.warn(
           `Not migrating: ${this.#attempt} attempts already failed.`
         );
@@ -284,9 +312,32 @@ export class AutofillStorageMigrator {
    * @param {boolean} [options.wipe=true] Empty the target before copying.
    * @returns {Promise<object>} What the copy did: the counts either side of it,
    *   whether every record arrived, the first reason one was rejected, the
-   *   records that came back different, and the error where it threw.
+   *   records that came back different, and the error where it threw or the
+   *   source was written to while it ran.
    */
   async #migrate(source, target, { wipe = true } = {}) {
+    // The source keeps serving while the copy runs. Only a copy into Rust is
+    // checked for writes to it: the JSON store announces every write but the
+    // sync bookkeeping as it makes it, and the Rust adapter's bulk writes are
+    // silent, so whatever is heard here came from the source. A copy back is
+    // not: the Rust adapter announces a write only after refreshing its count,
+    // and the JSON store's removeMany announces the copy's own deletions.
+    // "migrate" announces a completed switch, not a write.
+    const { collectionName, rustAdapter } = this.config;
+    const watchSource = target instanceof rustAdapter;
+    let sourceChanged = false;
+    const onChange = (subject, _topic, data) => {
+      if (
+        data != "migrate" &&
+        subject.wrappedJSObject?.collectionName == collectionName
+      ) {
+        sourceChanged = true;
+      }
+    };
+    if (watchSource) {
+      Services.obs.addObserver(onChange, "formautofill-storage-changed");
+    }
+
     let sourceTotal = 0;
     let targetTotal = 0;
     let migrated = 0;
@@ -453,7 +504,14 @@ export class AutofillStorageMigrator {
       const extra = stored.filter(
         record => !sourceGuids.has(record.guid)
       ).length;
-      ok = failed === 0 && missing === 0 && extra === 0;
+      // Nothing awaits from here on, so no write can land after this check.
+      ok = failed === 0 && missing === 0 && extra === 0 && !sourceChanged;
+      if (sourceChanged) {
+        errorCode = SOURCE_CHANGED;
+        this.logger.warn(
+          "The source was written to while it was being copied."
+        );
+      }
 
       this.logger.log(
         `Migrated ${migrated}/${sourceTotal} records ` +
@@ -466,6 +524,10 @@ export class AutofillStorageMigrator {
       errorCode = errorCodeOf(e);
       threw = errorTextOf(e);
       this.logger.error("Migration failed", e);
+    } finally {
+      if (watchSource) {
+        Services.obs.removeObserver(onChange, "formautofill-storage-changed");
+      }
     }
 
     return {
@@ -623,6 +685,7 @@ export class AddressStorageMigrator extends AutofillStorageMigrator {
     return {
       metrics: Glean.formautofillAddresses,
       rustAdapter: lazy.RustAutofillAddressesAdapter,
+      collectionName: "addresses",
       // Which generation of the dry run a profile has done, so a build that
       // fixes a migration bug can bump testVersion and measure the same
       // profiles again. Kept apart from rust.active: a dry run wipes the store
@@ -631,6 +694,10 @@ export class AddressStorageMigrator extends AutofillStorageMigrator {
       testVersionPref:
         "extensions.formautofill.addresses.storage.rust.migrationTestVersion",
       testVersion: 1,
+      // How many launches have already tried and failed the dry run of the
+      // current generation.
+      testAttemptsPref:
+        "extensions.formautofill.addresses.storage.rust.migrationTestAttempts",
       // How many launches have already tried and failed.
       attemptsPref:
         "extensions.formautofill.addresses.storage.rust.migrationAttempts",
@@ -654,9 +721,12 @@ export class CreditCardStorageMigrator extends AutofillStorageMigrator {
     return {
       metrics: Glean.formautofillCreditcards,
       rustAdapter: lazy.RustAutofillCreditCardsAdapter,
+      collectionName: "creditCards",
       testVersionPref:
         "extensions.formautofill.creditCards.storage.rust.migrationTestVersion",
       testVersion: 1,
+      testAttemptsPref:
+        "extensions.formautofill.creditCards.storage.rust.migrationTestAttempts",
       attemptsPref:
         "extensions.formautofill.creditCards.storage.rust.migrationAttempts",
     };

@@ -23,8 +23,11 @@ use crate::gradient_builder::GradientBuilder;
 use crate::color::{ColorF, ColorU};
 use crate::font::{FontInstanceKey, GlyphInstance, GlyphOptions};
 use crate::image::{ColorDepth, ImageKey};
-use crate::interned_prims::{RectangleKey, RectanglePrim};
+use crate::interned_prims::{
+    BoxShadow, BoxShadowKey, LineDecoration, LineDecorationKey, RectangleKey, RectanglePrim,
+};
 use crate::interning::{self, DlDelta};
+use crate::path::Path;
 use crate::key_types::{EdgeMask, GradientStopKey, PrimKeyCommonData, StretchSizeKey};
 use crate::prim_geometry::{
     apply_gradient_local_clip, image_stretch_size, optimize_linear_gradient,
@@ -359,6 +362,7 @@ impl<'de> Deserialize<'de> for BuiltDisplayList {
                 Debug::RectClip(v) => Real::RectClip(v),
                 Debug::RoundedRectClip(v) => Real::RoundedRectClip(v),
                 Debug::ImageMaskClip(v) => Real::ImageMaskClip(v),
+                Debug::PathClip(v) => Real::PathClip(v),
                 Debug::Rectangle(v) => Real::Rectangle(v),
                 Debug::HitTest(v) => Real::HitTest(v),
                 Debug::Line(v) => Real::Line(v),
@@ -402,8 +406,22 @@ impl<'de> Deserialize<'de> for BuiltDisplayList {
     }
 }
 
+/// Diagnostic information about the display list being iterated, included in
+/// the panic message if the serialized items turn out to be malformed.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct DlParseContext {
+    pub pipeline_id: Option<PipelineId>,
+    /// Whether this display list was already walked by a completed scene build.
+    pub built_before: bool,
+}
+
 pub struct BuiltDisplayListIter<'a> {
     data: &'a [u8],
+    /// Address and length of the whole serialized item buffer, so that a parse
+    /// failure can report its offset.
+    data_start: usize,
+    data_len: usize,
+    parse_context: DlParseContext,
     cur_item: di::DisplayItem,
     cur_stops: ItemRange<'a, di::GradientStop>,
     cur_glyphs: ItemRange<'a, GlyphInstance>,
@@ -623,6 +641,13 @@ impl BuiltDisplayList {
         BuiltDisplayListIter::new(self.items_data())
     }
 
+    /// Like `iter`, but `context` is reported if the items fail to parse.
+    pub fn iter_with_context(&self, context: DlParseContext) -> BuiltDisplayListIter {
+        let mut iter = BuiltDisplayListIter::new(self.items_data());
+        iter.parse_context = context;
+        iter
+    }
+
     pub fn size_in_bytes(&self) -> usize {
         self.payload.size_in_bytes()
     }
@@ -681,6 +706,7 @@ impl BuiltDisplayList {
                 Real::RectClip(v) => Debug::RectClip(v),
                 Real::RoundedRectClip(v) => Debug::RoundedRectClip(v),
                 Real::ImageMaskClip(v) => Debug::ImageMaskClip(v),
+                Real::PathClip(v) => Debug::PathClip(v),
                 Real::Rectangle(v) => Debug::Rectangle(v),
                 Real::HitTest(v) => Debug::HitTest(v),
                 Real::Line(v) => Debug::Line(v),
@@ -707,27 +733,15 @@ impl BuiltDisplayList {
     }
 }
 
-/// Returns the byte-range the slice occupied.
-fn skip_slice<'a, T: peek_poke::Peek>(data: &mut &'a [u8]) -> ItemRange<'a, T> {
-    let mut skip_offset = 0usize;
-    *data = peek_from_slice(data, &mut skip_offset);
-    let (skip, rest) = data.split_at(skip_offset);
-
-    // Adjust data pointer to skip read values
-    *data = rest;
-
-    ItemRange {
-        bytes: skip,
-        _boo: PhantomData,
-    }
-}
-
 impl<'a> BuiltDisplayListIter<'a> {
     pub fn new(
         data: &'a [u8],
     ) -> Self {
         Self {
             data,
+            data_start: data.as_ptr() as usize,
+            data_len: data.len(),
+            parse_context: DlParseContext::default(),
             cur_item: di::DisplayItem::PopStackingContext,
             cur_stops: ItemRange::default(),
             cur_glyphs: ItemRange::default(),
@@ -744,7 +758,11 @@ impl<'a> BuiltDisplayListIter<'a> {
     }
 
     pub fn sub_iter(&self) -> Self {
-        BuiltDisplayListIter::new(self.data)
+        let mut iter = BuiltDisplayListIter::new(self.data);
+        iter.data_start = self.data_start;
+        iter.data_len = self.data_len;
+        iter.parse_context = self.parse_context;
+        iter
     }
 
     pub fn current_item(&self) -> &di::DisplayItem {
@@ -817,23 +835,23 @@ impl<'a> BuiltDisplayListIter<'a> {
 
         match self.cur_item {
             SetGradientStops => {
-                self.cur_stops = skip_slice::<di::GradientStop>(&mut self.data);
+                self.cur_stops = self.skip_slice("set_gradient_stops.stops");
                 self.debug_stats.log_slice("set_gradient_stops.stops", &self.cur_stops);
             }
             SetFilterOps => {
-                self.cur_filters = skip_slice::<di::FilterOp>(&mut self.data);
+                self.cur_filters = self.skip_slice("set_filter_ops.ops");
                 self.debug_stats.log_slice("set_filter_ops.ops", &self.cur_filters);
             }
             SetFilterData => {
-                self.cur_filter_data.push(TempFilterData {
-                    func_types: skip_slice::<di::ComponentTransferFuncType>(&mut self.data),
-                    r_values: skip_slice::<f32>(&mut self.data),
-                    g_values: skip_slice::<f32>(&mut self.data),
-                    b_values: skip_slice::<f32>(&mut self.data),
-                    a_values: skip_slice::<f32>(&mut self.data),
-                });
+                let data = TempFilterData {
+                    func_types: self.skip_slice("set_filter_data.func_types"),
+                    r_values: self.skip_slice("set_filter_data.r_values"),
+                    g_values: self.skip_slice("set_filter_data.g_values"),
+                    b_values: self.skip_slice("set_filter_data.b_values"),
+                    a_values: self.skip_slice("set_filter_data.a_values"),
+                };
+                self.cur_filter_data.push(data);
 
-                let data = *self.cur_filter_data.last().unwrap();
                 self.debug_stats.log_slice("set_filter_data.func_types", &data.func_types);
                 self.debug_stats.log_slice("set_filter_data.r_values", &data.r_values);
                 self.debug_stats.log_slice("set_filter_data.g_values", &data.g_values);
@@ -841,21 +859,53 @@ impl<'a> BuiltDisplayListIter<'a> {
                 self.debug_stats.log_slice("set_filter_data.a_values", &data.a_values);
             }
             SetPoints => {
-                self.cur_points = skip_slice::<LayoutPoint>(&mut self.data);
+                self.cur_points = self.skip_slice("set_points.points");
                 self.debug_stats.log_slice("set_points.points", &self.cur_points);
             }
             ClipChain(_) => {
-                self.cur_clip_chain_items = skip_slice::<di::ClipId>(&mut self.data);
+                self.cur_clip_chain_items = self.skip_slice("clip_chain.clip_ids");
                 self.debug_stats.log_slice("clip_chain.clip_ids", &self.cur_clip_chain_items);
             }
             Text(_) => {
-                self.cur_glyphs = skip_slice::<GlyphInstance>(&mut self.data);
+                self.cur_glyphs = self.skip_slice("text.glyphs");
                 self.debug_stats.log_slice("text.glyphs", &self.cur_glyphs);
             }
             _ => { /* do nothing */ }
         }
 
         Some(self.as_ref())
+    }
+
+    /// Steps over a length-prefixed slice and returns the byte-range it occupied.
+    fn skip_slice<T: peek_poke::Peek>(&mut self, slice_name: &'static str) -> ItemRange<'a, T> {
+        let mut skip_offset = 0usize;
+        self.data = peek_from_slice(self.data, &mut skip_offset);
+        if skip_offset > self.data.len() {
+            self.slice_overrun(slice_name, skip_offset);
+        }
+        let (skip, rest) = self.data.split_at(skip_offset);
+
+        // Adjust data pointer to skip read values
+        self.data = rest;
+
+        ItemRange {
+            bytes: skip,
+            _boo: PhantomData,
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn slice_overrun(&self, slice_name: &'static str, slice_len: usize) -> ! {
+        panic!(
+            "WRDL: {} slice of {:#x} bytes overruns the {:#x} bytes left at offset {:#x} of {:#x}, {:?}",
+            slice_name,
+            slice_len,
+            self.data.len(),
+            self.data.as_ptr() as usize - self.data_start,
+            self.data_len,
+            self.parse_context,
+        );
     }
 
     pub fn as_ref<'b>(&'b self) -> DisplayItemRef<'a, 'b> {
@@ -1192,6 +1242,7 @@ struct CapturedPrim {
 /// which the copy takes from the shadow.
 enum CapturedKey {
     Rectangle { transformed_aa_edges: EdgeMask },
+    Line(LineDecoration),
 }
 
 #[repr(C)]
@@ -1215,6 +1266,22 @@ fn aligned_aa_edges(flags: di::PrimitiveFlags) -> EdgeMask {
         EdgeMask::all()
     } else {
         EdgeMask::empty()
+    }
+}
+
+/// The common key data of a primitive whose item has `common` and whose
+/// primitive rect is `prim_rect`.
+fn prim_key_common(
+    common: &di::CommonItemProperties,
+    prim_rect: LayoutRect,
+    transformed_aa_edges: EdgeMask,
+) -> PrimKeyCommonData {
+    PrimKeyCommonData {
+        flags: common.flags,
+        aligned_aa_edges: aligned_aa_edges(common.flags),
+        transformed_aa_edges,
+        prim_rect: prim_rect.into(),
+        local_clip_rect: common.clip_rect.into(),
     }
 }
 
@@ -1557,13 +1624,7 @@ impl DisplayListBuilder {
         transformed_aa_edges: EdgeMask,
     ) -> interning::Handle<RectangleKey> {
         let key = RectangleKey::new(
-            PrimKeyCommonData {
-                flags: common.flags,
-                aligned_aa_edges: aligned_aa_edges(common.flags),
-                transformed_aa_edges,
-                prim_rect: bounds.into(),
-                local_clip_rect: common.clip_rect.into(),
-            },
+            prim_key_common(common, bounds, transformed_aa_edges),
             RectanglePrim { color: color.into() },
         );
 
@@ -1597,24 +1658,50 @@ impl DisplayListBuilder {
         color: &ColorF,
         style: di::LineStyle,
     ) {
-        // Same shadow-scope exception as `push_text`.
-        if !color_is_visible(*color) && self.pending_shadows.is_empty() {
+        // Same shadow-scope exception as `push_text`: an invisible line is
+        // still captured, with no handle, so its copy can carry the shadow's
+        // colour; the original re-emission drops it.
+        let visible = color_is_visible(*color);
+        if !visible && self.pending_shadows.is_empty() {
             return;
         }
 
         let (common, offset) = self.normalize_common(common);
         let area = self.shift_rect(*area, offset);
 
-        let item = di::DisplayItem::Line(di::LineDisplayItem {
-            common,
-            area,
-            wavy_line_thickness,
-            orientation,
-            color: *color,
+        let decoration = LineDecoration {
             style,
-        });
+            orientation,
+            wavy_line_thickness: Au::from_f32_px(wavy_line_thickness),
+            color: (*color).into(),
+        };
+        let line = if visible {
+            self.intern_line(&decoration, area, &common)
+        } else {
+            interning::Handle::INVALID
+        };
 
-        self.push_item(&item);
+        self.capture_prim(&common, area, CapturedKey::Line(decoration));
+
+        self.push_item(&di::DisplayItem::Line(di::LineDisplayItem {
+            spatial_id: common.spatial_id,
+            clip_chain_id: common.clip_chain_id,
+            line,
+        }));
+    }
+
+    fn intern_line(
+        &mut self,
+        kind: &LineDecoration,
+        area: LayoutRect,
+        common: &di::CommonItemProperties,
+    ) -> interning::Handle<LineDecorationKey> {
+        let key = LineDecorationKey::new(
+            prim_key_common(common, area, EdgeMask::all()),
+            kind.clone(),
+        );
+
+        self.interners.intern(&key)
     }
 
     pub fn push_image(
@@ -1929,16 +2016,26 @@ impl DisplayListBuilder {
             }
         };
 
+        // Every field is relative to the shadow's own rect, so the key does
+        // not churn as the element moves; only `prim_rect` in the common data
+        // does, and that is what the store's template carries.
+        let key = BoxShadowKey::new(
+            prim_key_common(&common, bounds, EdgeMask::all()),
+            BoxShadow {
+                color: color.into(),
+                blur_radius: Au::from_f32_px(blur_radius),
+                clip_mode,
+                shadow_radius: shadow_radius.into(),
+                element_radius: border_radius.into(),
+                box_offset: offset.into(),
+                spread_amount: Au::from_f32_px(spread_amount),
+            },
+        );
+
         let item = di::DisplayItem::BoxShadow(di::BoxShadowDisplayItem {
-            common,
-            bounds,
-            offset,
-            color,
-            blur_radius,
-            spread_amount,
-            border_radius,
-            shadow_radius,
-            clip_mode,
+            spatial_id: common.spatial_id,
+            clip_chain_id: common.clip_chain_id,
+            box_shadow: self.interners.intern(&key),
         });
 
         self.push_item(&item);
@@ -2742,6 +2839,28 @@ impl DisplayListBuilder {
         id
     }
 
+    pub fn define_clip_path(
+        &mut self,
+        spatial_id: di::SpatialId,
+        path: &Path,
+        rect: LayoutRect,
+        fill_rule: di::FillRule,
+    ) -> di::ClipId {
+        let id = self.generate_clip_index();
+        let path = self.interners.intern(path);
+
+        let item = di::DisplayItem::PathClip(di::PathClipDisplayItem {
+            id,
+            spatial_id,
+            path,
+            rect: self.normalize_rect(rect, spatial_id),
+            fill_rule,
+        });
+
+        self.push_item(&item);
+        id
+    }
+
     pub fn define_clip_rect(
         &mut self,
         spatial_id: di::SpatialId,
@@ -2950,6 +3069,7 @@ impl DisplayListBuilder {
                     def @ (di::DisplayItem::RectClip(..)
                     | di::DisplayItem::RoundedRectClip(..)
                     | di::DisplayItem::ImageMaskClip(..)
+                    | di::DisplayItem::PathClip(..)
                     | di::DisplayItem::ClipChain(..)) => Parsed::Definition {
                         item: *def,
                         clip_ids: item.clip_chain_items().iter().collect(),
@@ -2964,8 +3084,8 @@ impl DisplayListBuilder {
                         // One entry per captured interned primitive, in capture
                         // order.
                         key: match draw {
-                            di::DisplayItem::Rectangle(..) => Some(
-                                captured_keys.next().expect("rectangle item without its captured key"),
+                            di::DisplayItem::Rectangle(..) | di::DisplayItem::Line(..) => Some(
+                                captured_keys.next().expect("primitive item without its captured key"),
                             ),
                             _ => None,
                         },
@@ -3077,7 +3197,7 @@ impl DisplayListBuilder {
                 let visible = match entry.item {
                     di::DisplayItem::Text(ref info) => color_is_visible(info.color),
                     di::DisplayItem::Rectangle(ref info) => info.rect != interning::Handle::INVALID,
-                    di::DisplayItem::Line(ref info) => color_is_visible(info.color),
+                    di::DisplayItem::Line(ref info) => info.line != interning::Handle::INVALID,
                     _ => true,
                 };
                 if !visible {
@@ -3123,6 +3243,18 @@ impl DisplayListBuilder {
                     rect,
                 })
             }
+            CapturedKey::Line(ref decoration) => {
+                let line = self.intern_line(
+                    &LineDecoration { color: color.into(), ..decoration.clone() },
+                    bounds,
+                    &common,
+                );
+                di::DisplayItem::Line(di::LineDisplayItem {
+                    spatial_id: common.spatial_id,
+                    clip_chain_id: common.clip_chain_id,
+                    line,
+                })
+            }
         }
     }
 
@@ -3150,8 +3282,8 @@ impl DisplayListBuilder {
         let shift = |common| shadow_copy_common(common, offset);
 
         Some(match item {
-            // Interned from its captured key, see `intern_shadow_copy`.
-            Rectangle(..) => unreachable!("rectangle shadow copies are interned from their captured key"),
+            // Interned from their captured keys, see `intern_shadow_copy`.
+            Rectangle(..) | Line(..) => unreachable!("shadow copy of a primitive with a captured key"),
             Text(info) => Text(di::TextDisplayItem {
                 common: shift(info.common),
                 bounds: info.bounds.translate(offset),
@@ -3162,12 +3294,6 @@ impl DisplayListBuilder {
             Image(info) => Image(di::ImageDisplayItem {
                 common: shift(info.common),
                 bounds: info.bounds.translate(offset),
-                color,
-                ..*info
-            }),
-            Line(info) => Line(di::LineDisplayItem {
-                common: shift(info.common),
-                area: info.area.translate(offset),
                 color,
                 ..*info
             }),
@@ -3257,6 +3383,44 @@ impl DisplayListBuilder {
                 delta,
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod parse_failure_tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "overruns")]
+    fn a_corrupt_slice_length_reports_where_it_failed() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+        builder.push_stops(&[di::GradientStop { offset: 0.0, color: ColorF::BLACK }]);
+        let (_, mut dl) = builder.end();
+
+        let data = &dl.payload.items_data;
+        let mut offset = 0;
+        let mut item = di::DisplayItem::PopStackingContext;
+        loop {
+            let rest = peek_from_slice(&data[offset..], &mut item);
+            if item == di::DisplayItem::SetGradientStops {
+                offset = data.len() - rest.len();
+                break;
+            }
+            let mut iter = BuiltDisplayListIter::new(&data[offset..]);
+            iter.next_raw().expect("no gradient stops in the display list");
+            offset = data.len() - iter.data.len();
+        }
+
+        let bogus_len: usize = 0x100_0000_0040;
+        dl.payload.items_data[offset..offset + mem::size_of::<usize>()]
+            .copy_from_slice(&bogus_len.to_ne_bytes());
+
+        let mut iter = dl.iter_with_context(DlParseContext {
+            pipeline_id: Some(PipelineId::dummy()),
+            built_before: true,
+        });
+        while iter.next().is_some() {}
     }
 }
 
@@ -3434,6 +3598,356 @@ mod rectangle_interning_tests {
 
         let (_, dl) = builder.end();
         assert_eq!(dl.delta().rectangles.adds.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod box_shadow_interning_tests {
+    use super::*;
+
+    const ELEMENT: LayoutRect = LayoutRect {
+        min: LayoutPoint::new(0.0, 0.0),
+        max: LayoutPoint::new(100.0, 100.0),
+    };
+
+    fn common() -> di::CommonItemProperties {
+        let pipeline_id = PipelineId::dummy();
+        di::CommonItemProperties {
+            clip_rect: LayoutRect::from_size(LayoutSize::new(1000.0, 1000.0)),
+            clip_chain_id: di::ClipChainId::INVALID,
+            spatial_id: di::SpatialId::root_scroll_node(pipeline_id),
+            flags: di::PrimitiveFlags::default(),
+        }
+    }
+
+    /// A plain blurred outset shadow, varying only what the caller passes.
+    fn push_shadow(
+        builder: &mut DisplayListBuilder,
+        bounds: LayoutRect,
+        color: ColorF,
+        blur_radius: f32,
+    ) {
+        builder.push_box_shadow(
+            &common(),
+            bounds,
+            LayoutVector2D::new(2.0, 3.0),
+            color,
+            blur_radius,
+            0.0,
+            di::BorderRadius::zero(),
+            di::BorderRadius::zero(),
+            di::BoxShadowClipMode::Outset,
+        );
+    }
+
+    fn shadow_items(dl: &BuiltDisplayList) -> Vec<di::BoxShadowDisplayItem> {
+        let mut items = Vec::new();
+        let mut iter = dl.iter();
+        while let Some(item) = iter.next() {
+            if let di::DisplayItem::BoxShadow(info) = item.item() {
+                items.push(*info);
+            }
+        }
+        items
+    }
+
+    #[test]
+    fn identical_shadows_in_one_list_intern_once() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        // The repeat of a shadow is the common case on a real page: a card grid
+        // gives every card the same colour, blur, spread and radii.
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, 4.0);
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, 4.0);
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, 4.0);
+
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().box_shadows.adds.len(), 1);
+        let items = shadow_items(&dl);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].box_shadow, items[2].box_shadow);
+    }
+
+    #[test]
+    fn a_moved_shadow_is_a_different_entry() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+
+        builder.begin(60.0);
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, 4.0);
+        let (_, first) = builder.end();
+        assert_eq!(first.delta().box_shadows.adds.len(), 1);
+
+        // The prim rect is in the key, as it was in the scene builder's, so a
+        // shadow that moves in local space is a new entry and the old one is
+        // retained for a while before the GC removes it.
+        builder.begin(60.0);
+        push_shadow(&mut builder, ELEMENT.translate(LayoutVector2D::new(0.0, 40.0)), ColorF::BLACK, 4.0);
+        let (_, second) = builder.end();
+        assert_eq!(second.delta().box_shadows.adds.len(), 1);
+        assert!(second.delta().box_shadows.removes.is_empty());
+
+        // Unchanged, it is reused and the steady-state delta is empty.
+        builder.begin(60.0);
+        push_shadow(&mut builder, ELEMENT.translate(LayoutVector2D::new(0.0, 40.0)), ColorF::BLACK, 4.0);
+        let (_, third) = builder.end();
+        assert!(third.delta().box_shadows.is_empty());
+    }
+
+    #[test]
+    fn blur_is_part_of_the_key() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, 4.0);
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, 8.0);
+
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().box_shadows.adds.len(), 2);
+    }
+
+    #[test]
+    fn an_over_max_blur_is_clamped_into_one_entry() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        // Clamping happens before the key is built, so two absurd radii are one
+        // shadow rather than two entries that render identically.
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, di::MAX_BLUR_RADIUS + 1.0);
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, di::MAX_BLUR_RADIUS + 500.0);
+
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().box_shadows.adds.len(), 1);
+    }
+
+    #[test]
+    fn a_transparent_shadow_is_not_interned() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        push_shadow(&mut builder, ELEMENT, ColorF::TRANSPARENT, 4.0);
+
+        let (_, dl) = builder.end();
+        assert!(dl.delta().box_shadows.is_empty(), "invisible shadow was interned");
+        assert!(shadow_items(&dl).is_empty());
+    }
+
+    #[test]
+    fn a_rejected_shadow_is_not_interned() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        // Spread collapses the shadow rect to nothing, so there is no primitive
+        // and nothing to intern for it.
+        builder.push_box_shadow(
+            &common(),
+            ELEMENT,
+            LayoutVector2D::zero(),
+            ColorF::BLACK,
+            4.0,
+            -100.0,
+            di::BorderRadius::zero(),
+            di::BorderRadius::zero(),
+            di::BoxShadowClipMode::Outset,
+        );
+
+        let (_, dl) = builder.end();
+        assert!(dl.delta().box_shadows.is_empty(), "empty shadow was interned");
+        assert!(shadow_items(&dl).is_empty());
+    }
+
+    #[test]
+    fn a_zero_blur_shadow_never_reaches_the_interner() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        // Desugared into a rect plus shaping clips, so it is not a box shadow
+        // by the time anything could intern one.
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, 0.0);
+
+        let (_, dl) = builder.end();
+        assert!(dl.delta().box_shadows.is_empty());
+        assert!(shadow_items(&dl).is_empty());
+        assert_eq!(dl.delta().rectangles.adds.len(), 1, "the desugared rect is interned instead");
+    }
+
+    #[test]
+    fn the_two_clip_modes_do_not_share_an_entry() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        for clip_mode in [di::BoxShadowClipMode::Outset, di::BoxShadowClipMode::Inset] {
+            builder.push_box_shadow(
+                &common(),
+                ELEMENT,
+                LayoutVector2D::new(2.0, 3.0),
+                ColorF::BLACK,
+                4.0,
+                1.0,
+                di::BorderRadius::zero(),
+                di::BorderRadius::zero(),
+                clip_mode,
+            );
+        }
+
+        // Not just the mode: the spread's sign and the flags differ with it.
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().box_shadows.adds.len(), 2);
+    }
+
+    #[test]
+    fn one_build_covers_every_interner() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+
+        // A build that interns one type still advances the other, so a receiver
+        // reading one build number per display list sees a contiguous stream
+        // whichever type it is checking.
+        builder.begin(60.0);
+        push_shadow(&mut builder, ELEMENT, ColorF::BLACK, 4.0);
+        let (_, first) = builder.end();
+
+        builder.begin(60.0);
+        let (_, second) = builder.end();
+
+        assert_eq!(first.delta().builder, second.delta().builder);
+        assert_eq!(first.delta().build.0 + 1, second.delta().build.0);
+        assert!(first.delta().rectangles.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod line_decoration_interning_tests {
+    use super::*;
+
+    const AREA: LayoutRect = LayoutRect {
+        min: LayoutPoint::new(0.0, 90.0),
+        max: LayoutPoint::new(200.0, 92.0),
+    };
+
+    fn common() -> di::CommonItemProperties {
+        let pipeline_id = PipelineId::dummy();
+        di::CommonItemProperties {
+            clip_rect: LayoutRect::from_size(LayoutSize::new(1000.0, 1000.0)),
+            clip_chain_id: di::ClipChainId::INVALID,
+            spatial_id: di::SpatialId::root_scroll_node(pipeline_id),
+            flags: di::PrimitiveFlags::default(),
+        }
+    }
+
+    fn push(builder: &mut DisplayListBuilder, color: ColorF, style: di::LineStyle) {
+        builder.push_line(
+            &common(),
+            &AREA,
+            1.0,
+            di::LineOrientation::Horizontal,
+            &color,
+            style,
+        );
+    }
+
+    fn line_items(dl: &BuiltDisplayList) -> Vec<di::LineDisplayItem> {
+        let mut items = Vec::new();
+        let mut iter = dl.iter();
+        while let Some(item) = iter.next() {
+            if let di::DisplayItem::Line(info) = item.item() {
+                items.push(*info);
+            }
+        }
+        items
+    }
+
+    #[test]
+    fn identical_lines_intern_once() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        push(&mut builder, ColorF::BLACK, di::LineStyle::Solid);
+        push(&mut builder, ColorF::BLACK, di::LineStyle::Solid);
+        push(&mut builder, ColorF::BLACK, di::LineStyle::Dotted);
+
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().line_decorations.adds.len(), 2, "style is part of the key");
+        let items = line_items(&dl);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].line, items[1].line);
+        assert_ne!(items[0].line, items[2].line);
+    }
+
+    #[test]
+    fn a_transparent_line_is_dropped_at_record_time() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        push(&mut builder, ColorF::TRANSPARENT, di::LineStyle::Solid);
+
+        let (_, dl) = builder.end();
+        assert!(dl.delta().line_decorations.is_empty());
+        assert!(line_items(&dl).is_empty());
+    }
+
+    #[test]
+    fn a_transparent_line_still_casts_a_shadow() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        let red = ColorF::new(1.0, 0.0, 0.0, 1.0);
+        builder.push_shadow(
+            &di::SpaceAndClipInfo {
+                spatial_id: di::SpatialId::root_scroll_node(PipelineId::dummy()),
+                clip_chain_id: di::ClipChainId::INVALID,
+            },
+            di::Shadow {
+                offset: LayoutVector2D::new(0.0, 2.0),
+                color: red,
+                blur_radius: 0.0,
+            },
+            true,
+        );
+        push(&mut builder, ColorF::TRANSPARENT, di::LineStyle::Wavy);
+        builder.pop_all_shadows();
+
+        // Only the copy survives, in the shadow's colour and with the
+        // original's style; the handle-less original is not re-emitted.
+        let (_, dl) = builder.end();
+        let adds = &dl.delta().line_decorations.adds;
+        assert_eq!(adds.len(), 1);
+        assert_eq!(adds[0].key.kind.color, red.into());
+        assert_eq!(adds[0].key.kind.style, di::LineStyle::Wavy);
+        // The item carries no geometry, so the copy's comes from the captured
+        // key, moved by the shadow offset.
+        let offset = LayoutVector2D::new(0.0, 2.0);
+        assert_eq!(adds[0].key.common.prim_rect, AREA.translate(offset).into());
+        assert_eq!(adds[0].key.common.local_clip_rect, common().clip_rect.translate(offset).into());
+        let items = line_items(&dl);
+        assert_eq!(items.len(), 1);
+        assert_ne!(items[0].line, interning::Handle::INVALID);
+    }
+
+    #[test]
+    fn a_shadowed_line_interns_its_copy_separately() {
+        let mut builder = DisplayListBuilder::new(PipelineId::dummy());
+        builder.begin(60.0);
+
+        builder.push_shadow(
+            &di::SpaceAndClipInfo {
+                spatial_id: di::SpatialId::root_scroll_node(PipelineId::dummy()),
+                clip_chain_id: di::ClipChainId::INVALID,
+            },
+            di::Shadow {
+                offset: LayoutVector2D::new(0.0, 2.0),
+                color: ColorF::new(1.0, 0.0, 0.0, 1.0),
+                blur_radius: 0.0,
+            },
+            true,
+        );
+        push(&mut builder, ColorF::BLACK, di::LineStyle::Dashed);
+        builder.pop_all_shadows();
+
+        let (_, dl) = builder.end();
+        assert_eq!(dl.delta().line_decorations.adds.len(), 2);
+        let items = line_items(&dl);
+        assert_eq!(items.len(), 2);
+        assert_ne!(items[0].line, items[1].line);
     }
 }
 

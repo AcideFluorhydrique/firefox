@@ -1832,19 +1832,20 @@ void nsWindow::SetCursor(const Cursor& aCursor) {
   if (mCustomCursorAllowed) {
     imageCursor = GetCursorForImage(aCursor, GdkCeiledScaleFactor());
   }
-
-  // When using a custom cursor, clear the cursor first using eCursor_none, in
-  // order to work around https://gitlab.gnome.org/GNOME/gtk/-/issues/6242
-  GdkCursor* nonImageCursor =
-      get_gtk_cursor(imageCursor ? eCursor_none : aCursor.mDefaultCursor);
   auto CleanupCursor = mozilla::MakeScopeExit([&]() {
     // get_gtk_cursor returns a weak reference, which we shouldn't unref.
     if (imageCursor) {
       g_object_unref(imageCursor);
     }
   });
-
-  gdk_window_set_cursor(mGdkWindow, nonImageCursor);
+  // When using a custom cursor, clear the cursor first using eCursor_none if we
+  // are using gtk<3.24.39, to work around:
+  // https://gitlab.gnome.org/GNOME/gtk/-/issues/6242
+  if (!imageCursor || gtk_check_version(3, 24, 39)) {
+    GdkCursor* nonImageCursor =
+        get_gtk_cursor(imageCursor ? eCursor_none : aCursor.mDefaultCursor);
+    gdk_window_set_cursor(mGdkWindow, nonImageCursor);
+  }
   if (imageCursor) {
     gdk_window_set_cursor(mGdkWindow, imageCursor);
   }
@@ -2199,6 +2200,11 @@ gboolean nsWindow::OnExposeEvent(cairo_t* cr) {
     LOG("destroyed after NotifyOcclusionState()");
     return FALSE;
   }
+
+  // It's possible we're still hidden although we get 'draw' (on-expose) event
+  // from Gtk3. Add explicit check for it to avoid painting to hidden
+  // window.
+  WatchHiddenVSyncSource();
 
   // Send any pending resize events so that layout can update. May run event
   // loop and destroy us.
@@ -3313,7 +3319,7 @@ TimeStamp nsWindow::GetEventTimeStamp(guint32 aEventTime) {
 #ifdef MOZ_X11
 mozilla::CurrentX11TimeGetter* nsWindow::GetCurrentTimeGetter() {
   if (MOZ_UNLIKELY(!mCurrentTimeGetter)) {
-    mCurrentTimeGetter = MakeUnique<CurrentX11TimeGetter>(mGdkWindow);
+    mCurrentTimeGetter = std::make_unique<CurrentX11TimeGetter>(mGdkWindow);
   }
   return mCurrentTimeGetter.get();
 }
@@ -7499,7 +7505,7 @@ UniquePtr<WaylandSurfaceLock> nsWindow::LockSurface() {
   if (mIsDestroyed || !mSurface) {
     return nullptr;
   }
-  return MakeUnique<WaylandSurfaceLock>(MOZ_WL_SURFACE(mContainer));
+  return std::make_unique<WaylandSurfaceLock>(MOZ_WL_SURFACE(mContainer));
 #else
   return nullptr;
 #endif

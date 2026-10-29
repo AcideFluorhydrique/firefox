@@ -516,10 +516,15 @@ pref("browser.urlbar.trustPanel.featureGate", true);
 pref("browser.urlbar.trustPanel.breachAlerts.featureGate", true);
 pref("browser.urlbar.trustPanel.breachAlerts", true);
 
-// Whether or not Unified Search Button is shown always.
-pref("browser.urlbar.unifiedSearchButton.always", false);
-// Whether or not history is shown when in search mode.
-pref("browser.urlbar.unifiedSearchButton.historyInSearchMode", false);
+#ifdef NIGHTLY_BUILD
+  // Whether or not Unified Search Button is shown always.
+  pref("browser.urlbar.unifiedSearchButton.always", true);
+  // Whether or not history is shown when in search mode.
+  pref("browser.urlbar.unifiedSearchButton.historyInSearchMode", true);
+#else
+  pref("browser.urlbar.unifiedSearchButton.always", false);
+  pref("browser.urlbar.unifiedSearchButton.historyInSearchMode", false);
+#endif
 
 // Enable trending suggestions and recent searches.
 pref("browser.urlbar.trending.featureGate", true);
@@ -1173,11 +1178,7 @@ pref("browser.tabs.hoverPreview.showThumbnails", true);
 
 pref("browser.tabs.groups.enabled", true);
 pref("browser.tabs.groups.hoverPreview.enabled", true);
-#ifdef NIGHTLY_BUILD
 pref("browser.tabs.groups.alternateMenu", true);
-#else
-pref("browser.tabs.groups.alternateMenu", false);
-#endif
 // Bug 2052293: temporarily disabled while tab groups move away from the list all tabs menu.
 pref("browser.tabs.groups.onboardingCallouts.enabled", false);
 // Number of times the "Tab group saved" confirmation hint has been shown
@@ -1652,6 +1653,12 @@ pref("places.frecency.origins.alternative.featureGate", false);
 // Whether to warm up network connections for places: menus and places: toolbar.
 pref("browser.places.speculativeConnect.enabled", true);
 
+#ifdef XP_MACOSX
+// Limit query results in the native macOS menu. Set to 0 to disable the limit.
+// Restart for changes to fully apply to cached queries.
+pref("browser.places.nativeMenu.maxResults", 100);
+#endif
+
 // if true, use full page zoom instead of text zoom
 pref("browser.zoom.full", true);
 
@@ -2001,10 +2008,10 @@ pref("browser.newtabpage.activity-stream.images.smart", true);
 pref("browser.newtabpage.activity-stream.weather.locationSearchEnabled", true);
 
 // List of regions that get weather by default.
-pref("browser.newtabpage.activity-stream.discoverystream.region-weather-config", "AT,BE,BG,CA,CH,CY,CZ,DE,DK,EE,ES,FI,FR,GB,GR,HR,HU,IE,IS,IT,LI,LT,LV,MT,NL,NO,PL,PT,RO,SE,SI,SK,US");
+pref("browser.newtabpage.activity-stream.discoverystream.region-weather-config", "AT,BE,BG,CA,CH,CY,CZ,DE,DK,EE,ES,FI,FR,GB,GL,GR,HK,HR,HU,IE,IQ,IS,IT,LI,LT,LV,MT,NL,NO,PL,PT,RO,RU,SE,SI,SK,US");
 
 // List of locales that weather widget supports.
-pref("browser.newtabpage.activity-stream.discoverystream.locale-weather-config", "bg,cs,da,de,el,en-CA,en-GB,en-US,es-ES,et,fi,fr,hr,hu,is,it,lv,nb-NO,nl,pl,pt-PT,ro,sk,sl,sv-SE,tr");
+pref("browser.newtabpage.activity-stream.discoverystream.locale-weather-config", "ar,bg,cs,da,de,el,en-CA,en-GB,en-US,es-ES,et,fi,fr,hr,hu,is,it,lv,nb-NO,nl,pl,pt-PT,ro,ru,sk,sl,sv-SE,tr,zh-CN,zh-TW");
 
 // Regions with no widgets at all. Everywhere else the container is available
 // and on, and each widget's own prefs decide what appears. Blank means no
@@ -2277,19 +2284,6 @@ pref("nimbus.debug", false);
 pref("nimbus.validation.enabled", true);
 pref("nimbus.firstUpdateComplete", false);
 
-// Should Nimbus write to the shared ProfilesDatastoreService? Only used by tests.
-// TODO(bug 1967779): Require the ProfileDatastoreService by default and remove
-// this pref.
-pref("nimbus.profilesdatastoreservice.enabled", true);
-
-// Should Nimbus read from the shared ProfilesDatastoreService?
-// TODO(bug 2032586): Remove this pref.
-pref("nimbus.profilesdatastoreservice.read.enabled", true);
-
-// Should Nimbus sync experiment unenrollments from other profiles?
-// TODO(bug 2032586): Remove this pref.
-pref("nimbus.profilesdatastoreservice.sync.enabled", true);
-
 // Enable the targeting context telemetry by default, but allow it to be
 // disabled, e.g., for artifact builds.
 // See-also: https://bugzilla.mozilla.org/show_bug.cgi?id=1936317
@@ -2505,6 +2499,10 @@ pref("browser.smartwindow.searchTheWebFast", true);
 // written answer and its citations in one call. Takes precedence over
 // browser.smartwindow.searchTheWebFast.
 pref("browser.smartwindow.searchTheWebAnswers", false);
+
+// Smart Window: approximate location (city, region, country) from Merino
+// geolocation, kept in memory.
+pref("browser.smartwindow.location.enabled", true);
 
 // Smart Window Logging
 pref("browser.smartwindow.aiTabHistory.logLevel", "Error");
@@ -3844,7 +3842,7 @@ pref("browser.ipProtection.l10nGateVersion", 0);
 // Pref to enable support for site exceptions
 pref("browser.ipProtection.features.siteExceptions", true);
 // Pref to enable support for site inclusions
-pref("browser.ipProtection.features.siteInclusions", false);
+pref("browser.ipProtection.features.siteInclusions", true);
 // Pref to track if the site inclusion prompt has been shown in the VPN panel
 pref("browser.ipProtection.siteInclusionPromptShown", false);
 pref("browser.ipProtection.log", false);

@@ -1338,7 +1338,7 @@ void RenderThread::InitDeviceTask() {
   nsAutoCString err;
   CreateSingletonGL(err);
   if (gfx::gfxVars::UseWebRenderProgramBinaryDisk()) {
-    mProgramCache = MakeUnique<WebRenderProgramCache>(ThreadPool().Raw());
+    mProgramCache = std::make_unique<WebRenderProgramCache>(ThreadPool().Raw());
   }
   // Query the shared GL context to force the
   // lazy initialization to happen now.
@@ -1514,7 +1514,8 @@ gl::GLContext* RenderThread::SingletonGL(nsACString& aError) {
     mShaders = nullptr;
   }
   if (mSingletonGL && mSingletonGLIsForHardwareWebRender && !mShaders) {
-    mShaders = MakeUnique<WebRenderShaders>(mSingletonGL, mProgramCache.get());
+    mShaders =
+        std::make_unique<WebRenderShaders>(mSingletonGL, mProgramCache.get());
   }
 
   return mSingletonGL.get();
@@ -1757,6 +1758,21 @@ static already_AddRefed<gl::GLContext> CreateGLContextANGLE(
 }
 #endif
 
+#ifdef MOZ_WIDGET_ANDROID
+static already_AddRefed<gl::GLContext> CreateGLContextANGLEAndroid(
+    nsACString& aError) {
+  nsCString failureId;
+  RefPtr<gl::GLContext> gl = gl::GLContextProviderEGL::CreateForCompositorANGLE(
+      !gfx::gfxVars::UseSoftwareWebRender(), &failureId);
+  if (!gl || !gl->IsANGLE() || !gl->MakeCurrent()) {
+    aError.Assign(nsPrintfCString(
+        "RcANGLE(create compositor context failed: %s)", failureId.get()));
+    return nullptr;
+  }
+  return gl.forget();
+}
+#endif
+
 #if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GTK)
 static already_AddRefed<gl::GLContext> CreateGLContextEGL() {
   // Create GLContext with dummy EGLSurface.
@@ -1796,7 +1812,12 @@ static already_AddRefed<gl::GLContext> CreateGLContext(
     gl = CreateGLContextANGLE(aError, aOutSyncObject);
   }
 #elif defined(MOZ_WIDGET_ANDROID)
-  gl = CreateGLContextEGL();
+  if (gfx::gfxVars::UseWebRenderANGLE() &&
+      gl::GLLibraryEGL::IsANGLEAvailable()) {
+    gl = CreateGLContextANGLEAndroid(aError);
+  } else {
+    gl = CreateGLContextEGL();
+  }
 #elif defined(MOZ_WIDGET_GTK)
   if (gfx::gfxVars::UseEGL()) {
     gl = CreateGLContextEGL();

@@ -1318,7 +1318,7 @@ NS_IMPL_QUERY_INTERFACE(AddResponseHeadersToResponseHead, nsIHttpHeaderVisitor)
 
 nsresult nsHttpChannel::HandleOverrideResponse() {
   // Start building a response with the data from mOverrideResponse.
-  mResponseHead = MakeUnique<nsHttpResponseHead>();
+  mResponseHead = std::make_unique<nsHttpResponseHead>();
 
   // Apply override response status code and status text.
   uint32_t statusCode;
@@ -2538,8 +2538,9 @@ nsresult nsHttpChannel::CallOnStartRequest() {
   // false when a stream converter is applied.
   bool unknownDecoderStarted = false;
   bool shouldSniff = false;
+  bool hasContentType = mResponseHead && mResponseHead->HasContentType();
   if (mResponseHead) {
-    if (!mResponseHead->HasContentType()) {
+    if (!hasContentType) {
       shouldSniff = true;
     } else {
       shouldSniff =
@@ -2548,7 +2549,7 @@ nsresult nsHttpChannel::CallOnStartRequest() {
   }
   if (shouldSniff) {
     MOZ_ASSERT(mConnectionInfo, "Should have connection info here");
-    if (!mContentTypeHint.IsEmpty()) {
+    if (!mContentTypeHint.IsEmpty() && !hasContentType) {
       mResponseHead->SetContentType(mContentTypeHint);
     } else if (mResponseHead->Version() == HttpVersion::v0_9 &&
                mConnectionInfo->OriginPort() !=
@@ -5350,7 +5351,7 @@ nsHttpChannel::OnCacheEntryCheck(nsICacheEntry* entry, uint32_t* aResult) {
       (gHttpHandler->SessionStartTime() > lastModifiedTime);
 
   // Get the cached HTTP response headers
-  mCachedResponseHead = MakeUnique<nsHttpResponseHead>();
+  mCachedResponseHead = std::make_unique<nsHttpResponseHead>();
 
   rv = nsHttp::GetHttpResponseHeadFromCacheEntry(entry,
                                                  mCachedResponseHead.get());
@@ -5587,7 +5588,7 @@ nsHttpChannel::OnCacheEntryCheck(nsICacheEntry* entry, uint32_t* aResult) {
     auto redirectedCachekeys = mRedirectedCachekeys.Lock();
     auto& ref = redirectedCachekeys.ref();
     if (!ref) {
-      ref = MakeUnique<nsTArray<nsCString>>();
+      ref = std::make_unique<nsTArray<nsCString>>();
     } else if (ref->Contains(cacheKey)) {
       doValidation = true;
     }

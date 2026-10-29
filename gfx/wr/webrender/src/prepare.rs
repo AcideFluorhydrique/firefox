@@ -280,6 +280,7 @@ fn prepare_prim_for_render(
                 &prim_info.clip_chain,
                 &frame_state.surfaces[pic_context.surface_index.0],
                 &data_stores.clip,
+                frame_context.dl_stores,
             );
 
             quad::prepare_quad(
@@ -401,13 +402,14 @@ fn prepare_prim_for_render(
         &prim_info.clip_chain,
         &frame_state.surfaces[pic_context.surface_index.0],
         &data_stores.clip,
+        frame_context.dl_stores,
     );
 
     match &mut prim_instance.kind {
-        PrimitiveKind::BoxShadow { data_handle, .. } => {
+        PrimitiveKind::BoxShadow { handle } => {
             tracy_rs::profile_scope!("BoxShadow");
 
-            let prim_data = &data_stores.box_shadow[*data_handle];
+            let prim_data = &dl_stores.box_shadows[*handle];
 
             prepare_box_shadow(
                 &prim_data.kind,
@@ -426,9 +428,9 @@ fn prepare_prim_for_render(
 
             return;
         }
-        PrimitiveKind::LineDecoration { data_handle } => {
+        PrimitiveKind::LineDecoration { handle } => {
             tracy_rs::profile_scope!("LineDecoration");
-            let prim_data = &data_stores.line_decoration[*data_handle];
+            let prim_data = &dl_stores.line_decorations[*handle];
             let line_dec_data = &prim_data.kind;
 
             let task = prim_data.kind.prepare(
@@ -1266,6 +1268,7 @@ fn add_clip_mask_render_task(
         &mut quad_clips,
         clip_node_range,
         clips,
+        frame_context.dl_stores,
     );
 
     quad::prepare_clip_range(

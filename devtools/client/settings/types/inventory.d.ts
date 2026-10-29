@@ -3,14 +3,26 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { Toolbox } from "../../framework/toolbox.js";
-import { callbacks } from "../inventory.mjs";
+import { SettingChangedEvent } from "../events.mjs";
+import { callbacks, conditions } from "../inventory.mjs";
 
-export type SettingChangeHandler = (context: { toolbox: Toolbox }) => void;
+export type SettingChangeHandler = (context: {
+  toolbox: Toolbox;
+  event: SettingChangedEvent;
+}) => void;
+
+export type SettingCondition = (context: {
+  toolbox: Toolbox;
+  setting: Setting;
+}) => boolean;
 
 export interface BaseSetting {
   id: string;
   pref: string;
   l10nId: string;
+  hidden?: keyof typeof conditions;
+  disabled?: keyof typeof conditions;
+  disabledL10nId?: string;
   changeAction?: keyof typeof callbacks;
 }
 
@@ -18,7 +30,17 @@ export interface BooleanSetting extends BaseSetting {
   type: "boolean";
 }
 
-export type Setting = BooleanSetting;
+export interface SettingOption {
+  value: string;
+  l10nId?: string;
+}
+
+export interface SelectSetting extends BaseSetting {
+  type: "select";
+  options: ReadonlyArray<SettingOption>;
+}
+
+export type Setting = BooleanSetting | SelectSetting;
 
 export interface SettingSection {
   id: string;

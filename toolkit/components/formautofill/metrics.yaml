@@ -37,8 +37,10 @@ formautofill.creditcards:
       - technical
     bugs:
       - https://bugzil.la/2068982
+      - https://bugzil.la/2085806
     data_reviews:
       - https://bugzil.la/2068982
+      - https://bugzil.la/2085806
     notification_emails:
       - autofill@lists.mozilla.org
     expires: never
@@ -117,9 +119,11 @@ formautofill.creditcards:
         type: quantity
       error_code:
         description: >
-          The UniFFI error variant when the migration threw, for grouping.
-          Absent otherwise, including when records were rejected or came up
-          short: the counts already describe that.
+          The UniFFI error variant when the migration threw, for grouping, or
+          "SourceChanged" when the JSON store was written to while it was
+          copied into the Rust store, which fails the run. Absent otherwise,
+          including when records were rejected or came up short: the counts
+          already describe that.
         type: string
       error_message:
         description: >
@@ -208,6 +212,29 @@ formautofill.creditcards:
           read. Absent when there are none.
         type: string
 
+  cvv_manage_action:
+    type: event
+    description: >
+      Recorded when the user saves a card from the card editor in Settings
+      (Manage payment methods > Add or Edit) and the security code (CVV)
+      changed. Not recorded when the security code is unchanged or the dialog
+      is cancelled. Only the kind of change is recorded, never the code.
+    data_sensitivity:
+      - interaction
+    bugs:
+      - https://bugzil.la/2086229
+    data_reviews:
+      - https://bugzil.la/2086229
+    notification_emails:
+      - autofill@lists.mozilla.org
+    expires: never
+    extra_keys:
+      action:
+        description: >
+          "add": a code is saved for a card that had none. "edit": the stored
+          code is changed. "clear": the stored code is removed.
+        type: string
+
 
 formautofill:
   form_submission_heuristic:
@@ -278,6 +305,59 @@ formautofill:
           String that contains a comma-separated list of fields located in a sandbox
           iframe.
         type: string
+
+  dropdown_suppressed:
+    type: event
+    description: >
+      Recorded when the autocomplete dropdown is withheld on a field because
+      the field's autocomplete attribute holds a value that cannot be parsed
+      into a known field name (only while
+      extensions.formautofill.suppressUnrecognizedAutocomplete.enabled is on).
+      Recorded at most once each time the field is focused.
+    bugs:
+      - https://bugzil.la/2081405
+    data_reviews:
+      - https://bugzil.la/2081405
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - autofill@lists.mozilla.org
+      - passwords-dev@mozilla.org
+    expires: never
+    extra_keys:
+      category:
+        description: >
+          Autofill category of the field: "address", "creditCard" or
+          "passport".
+        type: string
+      field_name:
+        description: >
+          The field name the field was classified as before its autocomplete
+          attribute changed, such as "address-line1".
+        type: string
+
+  dropdown_suppressed_total:
+    type: event
+    description: >
+      The number of dropdown_suppressed events recorded on the fields of a
+      form. Recorded once per form, when the form is submitted or the page is
+      left, and only if the dropdown was withheld at least once.
+    bugs:
+      - https://bugzil.la/2081405
+    data_reviews:
+      - https://bugzil.la/2081405
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - autofill@lists.mozilla.org
+      - passwords-dev@mozilla.org
+    expires: never
+    extra_keys:
+      count:
+        description: >
+          How many times the dropdown was withheld on the form's fields,
+          counted at most once per field focus.
+        type: quantity
 
   availability:
     type: boolean
@@ -1866,8 +1946,10 @@ formautofill.addresses:
       - technical
     bugs:
       - https://bugzil.la/2058441
+      - https://bugzil.la/2085806
     data_reviews:
       - https://bugzil.la/2058441
+      - https://bugzil.la/2085806
     notification_emails:
       - autofill@lists.mozilla.org
     expires: never
@@ -1946,9 +2028,11 @@ formautofill.addresses:
         type: quantity
       error_code:
         description: >
-          The UniFFI error variant when the migration threw, for grouping.
-          Absent otherwise, including when records were rejected or came up
-          short: the counts already describe that.
+          The UniFFI error variant when the migration threw, for grouping, or
+          "SourceChanged" when the JSON store was written to while it was
+          copied into the Rust store, which fails the run. Absent otherwise,
+          including when records were rejected or came up short: the counts
+          already describe that.
         type: string
       error_message:
         description: >
