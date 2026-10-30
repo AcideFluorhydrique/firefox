@@ -56,8 +56,11 @@ jobs:
           EOF
           cat "$MOZCONFIG"
 
+      # bootstrap 只裝了 Linux 本機用的 Rust std，交叉編譯還要補上 macOS 目標的 std
       - name: Bootstrap
-        run: ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+        run: |
+          ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+          rustup target add ${{ inputs.target }}
 
       - name: Build
         run: ./mach build
