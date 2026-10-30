@@ -58,7 +58,13 @@ jobs:
       - name: Bootstrap
         run: ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
 
+      # mach build 結束時會呼叫 terminal-notifier 跳桌面通知，
+      # 在沒有登入畫面的 runner 上會一直卡住直到 6 小時超時。移除它，mach 會直接略過通知。
+      - name: Disable build-complete notification
+        run: brew uninstall --ignore-dependencies terminal-notifier || true
+
       - name: Build
+        timeout-minutes: 300
         run: ./mach build
 
       - name: Package
