@@ -1,0 +1,79 @@
+name: Build Firefox macOS (cross-compile on Linux)
+
+# 在 Linux runner 上交叉編譯 macOS 版 Firefox，Mozilla 自己的 CI 也是這樣編 Mac 版的。
+# 好處：不用排 Mac runner、Linux runner 免費額度不乘 10 倍。
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "目標 CPU"
+        required: true
+        default: "aarch64-apple-darwin"
+        type: choice
+        options:
+          - aarch64-apple-darwin   # Apple Silicon
+          - x86_64-apple-darwin    # Intel Mac
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      MOZCONFIG: ${{ github.workspace }}/../mozconfig-ci
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Cache ~/.mozbuild (toolchains, macOS SDK)
+        uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-maccross-${{ inputs.target }}-${{ hashFiles('python/mozboot/**') }}
+          restore-keys: |
+            mozbuild-maccross-${{ inputs.target }}-
+
+      # --enable-bootstrap 讓 mach 自動下載交叉編譯需要的東西（clang、macOS SDK、dmg 打包工具）
+      - name: Write mozconfig
+        run: |
+          cat > "$MOZCONFIG" <<EOF
+          ac_add_options --enable-project=browser
+          ac_add_options --target=${{ inputs.target }}
+          ac_add_options --enable-bootstrap
+          ac_add_options --disable-debug-symbols
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objdir-mac
+          EOF
+          cat "$MOZCONFIG"
+
+      - name: Bootstrap
+        run: ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+
+      - name: Build
+        run: ./mach build
+
+      - name: Package
+        run: ./mach package
+
+      - name: List packages
+        run: ls -lh objdir-mac/dist/
+
+      # 交叉編譯有時產出 .dmg，有時是 .tar.gz（裡面是 Firefox.app），兩種都上傳
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-macos-cross-${{ inputs.target }}
+          path: |
+            objdir-mac/dist/*.dmg
+            objdir-mac/dist/firefox-*.tar.*
+          if-no-files-found: error
