@@ -75,10 +75,17 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup target add "$RUST_TARGET"
 
-      # mach build 結束時會呼叫 terminal-notifier 跳桌面通知，
-      # 在沒有登入畫面的 runner 上會一直卡住直到 6 小時超時。移除它，mach 會直接略過通知。
+      # mach build 結束時會呼叫 terminal-notifier 跳桌面通知，在沒有登入畫面的 runner 上會永遠卡住。
+      # runner 上的 terminal-notifier 是 Ruby gem 裝的（不是 brew），所以全部刪掉，
+      # 再放一個「什麼都不做、直接成功」的假 terminal-notifier 在 PATH 最前面，雙重保險。
       - name: Disable build-complete notification
-        run: brew uninstall --ignore-dependencies terminal-notifier || true
+        run: |
+          for p in $(which -a terminal-notifier 2>/dev/null); do sudo rm -f "$p"; done
+          gem uninstall -a -x terminal-notifier 2>/dev/null || true
+          mkdir -p "$HOME/stub-bin"
+          printf '#!/bin/sh\nexit 0\n' > "$HOME/stub-bin/terminal-notifier"
+          chmod +x "$HOME/stub-bin/terminal-notifier"
+          echo "$HOME/stub-bin" >> "$GITHUB_PATH"
 
       - name: Build Gecko
         timeout-minutes: 240
