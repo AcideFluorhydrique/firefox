@@ -984,13 +984,12 @@ if (Services.prefs.getBoolPref("browser.fireButton.enabled", false)) {
       // from claiming the data is gone before it is.
       let observer;
       let cleared = new Promise(resolve => {
-        observer = (subject, topic, data) => resolve(data != "aborted");
+        observer = resolve;
         Services.obs.addObserver(observer, "sanitizer-sanitization-complete");
       });
 
       try {
         let result = await lazy.Sanitizer.showUI(win, "clearSiteData", {
-          closeWindowsWithHistory: true,
           entryPoint: lazy.Sanitizer.DIALOG_ENTRY_POINTS.FIRE_BUTTON,
           triggeringEvent: aTriggeringEvent,
         });
@@ -998,10 +997,7 @@ if (Services.prefs.getBoolPref("browser.fireButton.enabled", false)) {
           this.recordFlowCompleted(aFlow, "cancelled", "dialog");
           return;
         }
-        if (!(await cleared)) {
-          this.recordFlowCompleted(aFlow, "aborted", "dialog");
-          return;
-        }
+        await cleared;
         this.recordFlowCompleted(aFlow, "deleted", "dialog");
         this.notifyComplete();
       } finally {
@@ -1014,7 +1010,8 @@ if (Services.prefs.getBoolPref("browser.fireButton.enabled", false)) {
 
     /**
      * Clear the whole browsing session: history, cookies, cache, downloads and
-     * other site data, then close every browser window and open a new one.
+     * other site data, then close every browser window and open a new one
+     * that keeps the pinned tabs.
      *
      * @param {object} aProgress - Receives the Sanitizer's progress.
      * @returns {Promise<object>} The Sanitizer's progress object.
@@ -1023,14 +1020,15 @@ if (Services.prefs.getBoolPref("browser.fireButton.enabled", false)) {
       return lazy.Sanitizer.sanitize(this.itemsToClear, {
         ignoreTimespan: true,
         privateStateForNewWindow: "non-private",
+        keepPinnedTabs: true,
         progress: aProgress,
       });
     },
 
     /**
-     * Show the completion toast. Clearing replaced every browser window, so
-     * this anchors in whichever window is current now rather than the one the
-     * action was triggered from. Sanitizer.sanitize only resolves once that
+     * Show the completion toast. Clearing from the panel replaces every browser
+     * window, so this anchors in whichever window is current now rather than
+     * the one the action was triggered from. Sanitizer.sanitize only resolves once that
      * window has finished its delayed startup.
      */
     notifyComplete() {

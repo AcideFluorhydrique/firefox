@@ -2897,6 +2897,38 @@ pub extern "C" fn neqo_http3conn_webtransport_session_protocol(
     }
 }
 
+/// Set the anticipated concurrent incoming unidirectional streams for a WebTransport session.
+#[no_mangle]
+pub extern "C" fn neqo_http3conn_webtransport_set_anticipated_concurrent_incoming_uni_streams(
+    conn: &mut NeqoHttp3Conn,
+    session_id: u64,
+    value: u16,
+) -> nsresult {
+    match conn
+        .conn
+        .webtransport_set_anticipated_incoming_uni_streams(StreamId::from(session_id), value)
+    {
+        Ok(()) => NS_OK,
+        Err(_) => NS_ERROR_UNEXPECTED,
+    }
+}
+
+/// Set the anticipated concurrent incoming bidirectional streams for a WebTransport session.
+#[no_mangle]
+pub extern "C" fn neqo_http3conn_webtransport_set_anticipated_concurrent_incoming_bidi_streams(
+    conn: &mut NeqoHttp3Conn,
+    session_id: u64,
+    value: u16,
+) -> nsresult {
+    match conn
+        .conn
+        .webtransport_set_anticipated_incoming_bidi_streams(StreamId::from(session_id), value)
+    {
+        Ok(()) => NS_OK,
+        Err(_) => NS_ERROR_UNEXPECTED,
+    }
+}
+
 /// Export keying material per RFC 5705/8446.
 ///
 /// # Safety
@@ -3412,10 +3444,10 @@ fn probe_apple_fast_path_inner(send_fd: c_int, recv_fd: c_int) -> io::Result<()>
 }
 
 /// Tests the Apple fast UDP datapath end-to-end using the same neqo-udp code
-/// path used in production. Called during socket process initialisation
-/// with two pre-created, loopback-bound UDP sockets. Returns `true` only if a
-/// datagram with ECN bits set survives the send/receive round-trip through the
-/// `sendmsg_x`/`recvmsg_x` APIs.
+/// path used in production. Called on a background thread in the parent
+/// process with two pre-created, loopback-bound UDP sockets. Returns `true`
+/// only if a datagram with ECN bits set survives the send/receive round-trip
+/// through the `sendmsg_x`/`recvmsg_x` APIs.
 #[cfg(target_vendor = "apple")]
 #[no_mangle]
 pub extern "C" fn neqo_glue_probe_apple_fast_path(send_fd: c_int, recv_fd: c_int) -> bool {

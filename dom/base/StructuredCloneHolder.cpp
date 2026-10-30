@@ -298,7 +298,7 @@ void StructuredCloneHolderBase::Clear() {
   mClearCalled = true;
 #endif
 
-  mBuffer = nullptr;
+  mData.reset();
 }
 
 void StructuredCloneHolderBase::Write(JSContext* aCx,
@@ -311,17 +311,17 @@ void StructuredCloneHolderBase::Write(
     JSContext* aCx, JS::Handle<JS::Value> aValue,
     JS::Handle<JS::Value> aTransfer,
     const JS::CloneDataPolicy& aCloneDataPolicy, ErrorResult& aRv) {
-  MOZ_ASSERT(!mBuffer, "Double Write is not allowed");
+  MOZ_ASSERT(!mData, "Double Write is not allowed");
   MOZ_ASSERT(!mClearCalled, "This method cannot be called after Clear.");
 
   aRv.MightThrowJSException();
 
-  mBuffer = std::make_unique<JSAutoStructuredCloneBuffer>(
-      mStructuredCloneScope, &StructuredCloneHolder::sCallbacks, this);
+  mData.emplace(mStructuredCloneScope);
 
-  if (!mBuffer->write(aCx, aValue, aTransfer, aCloneDataPolicy,
-                      &StructuredCloneHolder::sCallbacks, this)) {
-    mBuffer = nullptr;
+  if (!JS_WriteStructuredClone(
+          aCx, aValue, mData.ptr(), mStructuredCloneScope, aCloneDataPolicy,
+          &StructuredCloneHolder::sCallbacks, this, aTransfer)) {
+    mData.reset();
     // NOTE: We steal the exception from the context, as SuppressException in
     // our caller cannot suppress JSContext exceptions.
     aRv.StealExceptionFromJSContext(aCx);
@@ -330,8 +330,8 @@ void StructuredCloneHolderBase::Write(
 
   // Let's update our scope to the final one. The new one could be more
   // restrictive than the current one.
-  MOZ_ASSERT(mStructuredCloneScope >= mBuffer->scope());
-  mStructuredCloneScope = mBuffer->scope();
+  MOZ_ASSERT(mStructuredCloneScope >= mData->scope());
+  mStructuredCloneScope = mData->scope();
 }
 
 void StructuredCloneHolderBase::Read(JSContext* aCx,
@@ -343,33 +343,32 @@ void StructuredCloneHolderBase::Read(JSContext* aCx,
 void StructuredCloneHolderBase::Read(
     JSContext* aCx, JS::MutableHandle<JS::Value> aValue,
     const JS::CloneDataPolicy& aCloneDataPolicy, ErrorResult& aRv) {
-  MOZ_ASSERT(mBuffer, "Read() without Write() is not allowed.");
+  MOZ_ASSERT(mData, "Read() without Write() is not allowed.");
   MOZ_ASSERT(!mClearCalled, "This method cannot be called after Clear.");
 
   aRv.MightThrowJSException();
 
-  if (!mBuffer->read(aCx, aValue, aCloneDataPolicy,
-                     &StructuredCloneHolder::sCallbacks, this)) {
+  if (!JS_ReadStructuredClone(aCx, *mData, mData->scope(), aValue,
+                              aCloneDataPolicy,
+                              &StructuredCloneHolder::sCallbacks, this)) {
     // NOTE: We steal the exception from the context, as SuppressException in
     // our caller cannot suppress JSContext exceptions.
     aRv.StealExceptionFromJSContext(aCx);
   }
 }
 
-void StructuredCloneHolderBase::Adopt(JSStructuredCloneData&& aData,
-                                      uint32_t aVersion) {
-  MOZ_ASSERT(!mBuffer, "Double Adopt is not allowed");
+void StructuredCloneHolderBase::Adopt(JSStructuredCloneData&& aData) {
+  MOZ_ASSERT(!mData, "Double Adopt is not allowed");
   MOZ_ASSERT(!mClearCalled, "This method cannot be called after Clear.");
 
-  mBuffer = std::make_unique<JSAutoStructuredCloneBuffer>(
-      mStructuredCloneScope, &StructuredCloneHolder::sCallbacks, this);
-  mBuffer->adopt(std::move(aData), aVersion, &StructuredCloneHolder::sCallbacks,
-                 this);
+  mData.emplace(std::move(aData));
+  mData->setCallbacks(&StructuredCloneHolder::sCallbacks, this,
+                      OwnTransferablePolicy::OwnsTransferablesIfAny);
 
   // Let's update our scope to the final one. The new one could be more
   // restrictive than the current one.
-  MOZ_ASSERT(mStructuredCloneScope >= mBuffer->scope());
-  mStructuredCloneScope = mBuffer->scope();
+  MOZ_ASSERT(mStructuredCloneScope >= mData->scope());
+  mStructuredCloneScope = mData->scope();
 }
 
 bool StructuredCloneHolderBase::CustomReadTransferHandler(
@@ -469,9 +468,8 @@ void StructuredCloneHolder::MaybeClearTransferredState() {
 }
 
 void StructuredCloneHolder::Adopt(JSStructuredCloneData&& aData,
-                                  uint32_t aVersion,
                                   GeckoChildID aOriginChildID) {
-  StructuredCloneHolderBase::Adopt(std::move(aData), aVersion);
+  StructuredCloneHolderBase::Adopt(std::move(aData));
 
   mOriginChildID = aOriginChildID;
 

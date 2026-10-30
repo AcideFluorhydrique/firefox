@@ -80,7 +80,6 @@
 #include "mozilla/dom/Navigation.h"
 #include "mozilla/dom/NavigationHistoryEntry.h"
 #include "mozilla/dom/PSessionStorageObserverChild.h"
-#include "mozilla/dom/PolicyContainer.h"
 #include "mozilla/dom/PostMessageEvent.h"
 #include "mozilla/dom/PushNotifier.h"
 #include "mozilla/dom/RemoteWorkerDebuggerManagerChild.h"
@@ -1942,10 +1941,6 @@ mozilla::ipc::IPCResult ContentChild::RecvConstructBrowser(
 
   RefPtr<nsOpenWindowInfo> openWindowInfo = new nsOpenWindowInfo();
   openWindowInfo->mPrincipalToInheritForAboutBlank = aWindowInit.principal();
-  // XXX We should consider moving this to CreateAboutBlankDocumentViewer (bug
-  // 2004943)
-  openWindowInfo->mPolicyContainerToInheritForAboutBlank =
-      new PolicyContainer();
 
   nsresult rv = browserChild->Init(
       /* aOpener */ nullptr, windowChild, openWindowInfo);
@@ -2065,11 +2060,6 @@ mozilla::ipc::IPCResult ContentChild::RecvNetworkLinkTypeChange(
     obs->NotifyObservers(nullptr, "contentchild:network-link-type-changed",
                          nullptr);
   }
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult ContentChild::RecvSocketProcessCrashed() {
-  nsIOService::IncreaseSocketProcessCrashCount();
   return IPC_OK();
 }
 
@@ -5220,11 +5210,6 @@ bool StartOpenBSDSandbox(GeckoProcessType type, ipc::SandboxingKind kind) {
     case GeckoProcessType_GPU:
       OpenBSDFindPledgeUnveilFilePath("pledge.gpu", pledgeFile);
       OpenBSDFindPledgeUnveilFilePath("unveil.gpu", unveilFile);
-      break;
-
-    case GeckoProcessType_Socket:
-      OpenBSDFindPledgeUnveilFilePath("pledge.socket", pledgeFile);
-      OpenBSDFindPledgeUnveilFilePath("unveil.socket", unveilFile);
       break;
 
     case GeckoProcessType_RDD:

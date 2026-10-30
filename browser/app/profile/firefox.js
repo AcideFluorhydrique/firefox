@@ -1028,6 +1028,9 @@ pref(
 // floating menu next to the selected text.
 pref("browser.highlightToSearch.detectPageMenus", true);
 
+// Whether the user has seen the feature callout on the actions menu.
+pref("browser.highlightToSearch.callout.seen", false);
+
 // Spin the cursor while the page is loading
 pref("browser.spin_cursor_while_busy", false);
 
@@ -1766,13 +1769,6 @@ pref("browser.bookmarks.editDialog.maxRecentFolders", 7);
   pref("security.sandbox.content.write_path_whitelist", "");
   pref("security.sandbox.content.read_path_whitelist", "");
   pref("security.sandbox.content.syscall_whitelist", "");
-  // Introduced as part of bug 1608558.  Linux is currently the only platform
-  // that uses a sandbox level for the socket process.  The following levels
-  // are currently defined:
-  // 0 -> "no sandbox"
-  // 1 -> "sandboxed, allows socket operations and reading necessary certs"
-  // 2 -> default-deny for ioctl
-  pref("security.sandbox.socket.process.level", 2);
 #endif
 
 #if defined(XP_OPENBSD) && defined(MOZ_SANDBOX)
@@ -2898,9 +2894,6 @@ pref("extensions.webcompat.smartblockEmbeds.enabled", true);
 // leaks.
 pref("privacy.exposeContentTitleInWindow", true);
 pref("privacy.exposeContentTitleInWindow.pbm", true);
-
-// Run media transport in a separate process?
-pref("media.peerconnection.mtransport_process", true);
 
 // For speculatively warming up tabs to improve perceived
 // performance while using the async tab switcher.
