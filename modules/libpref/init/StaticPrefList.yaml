@@ -808,6 +808,11 @@
   value: true
   mirror: always
 
+- name: apz.pan_gesture.buffer_max_age
+  type: uint32_t
+  value: 200  # milliseconds
+  mirror: once
+
 # Fetch displayport updates early from the message queue.
 - name: apz.pinch_lock.mode
   type: RelaxedAtomicInt32
@@ -17190,6 +17195,16 @@
 
 # HTTP3: Whether Spurious Congestion Event Recovery should be turned on.
 - name: network.http.http3.spurious_recovery
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+  rust: true
+
+# HTTP3: Whether to use Alternative Backoff with ECN (RFC 8511), i.e. a smaller
+# multiplicative decrease on ECN-CE congestion events than on loss.
+# Has no effect unless network.http.http3.cc_algorithm is set to 1 (Cubic) and
+# network.http.http3.ecn_mark is true.
+- name: network.http.http3.abe
   type: RelaxedAtomicBool
   value: true
   mirror: always

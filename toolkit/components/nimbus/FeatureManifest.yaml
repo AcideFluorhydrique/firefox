@@ -148,6 +148,23 @@ search:
         Feature gate for highlight to search, the actions menu shown when text
         is selected on a page. Does not affect the user's own settings for the
         menu or its individual actions.
+    highlightToSearchIgnoredSites:
+      type: string
+      setPref:
+        branch: default
+        pref: browser.highlightToSearch.ignoredSites
+      description: >-
+        Comma-separated sites where the highlight to search actions menu is not
+        shown, because the page has its own menu for selected text. A site also
+        matches its subdomains.
+    highlightToSearchDetectPageMenus:
+      type: boolean
+      setPref:
+        branch: default
+        pref: browser.highlightToSearch.detectPageMenus
+      description: >-
+        Whether the highlight to search actions menu is not shown, or is hidden,
+        when the page shows its own floating menu next to the selected text.
 
 searchConfiguration:
   description: >-
@@ -3463,6 +3480,12 @@ networkingCongestionControl:
       setPref:
         branch: default
         pref: "network.http.http3.spurious_recovery"
+    http3Abe:
+      description: Whether Alternative Backoff with ECN (RFC 8511) is turned on. Has no effect unless network.http.http3.cc_algorithm is 1 (Cubic) and network.http.http3.ecn_mark is true.
+      type: boolean
+      setPref:
+        branch: default
+        pref: "network.http.http3.abe"
     http3EcnMark:
       description: Whether to set ECN marks on outgoing HTTP/3 datagrams and react to ECN-CE feedback from the peer.
       type: boolean

@@ -1017,6 +1017,17 @@ pref("browser.highlightToSearch.enabled", true);
 pref("browser.highlightToSearch.search.enabled", true);
 pref("browser.highlightToSearch.copy.enabled", true);
 
+// Comma-separated sites where the menu is not shown because the page has its
+// own menu for selected text. A site also matches its subdomains.
+pref(
+  "browser.highlightToSearch.ignoredSites",
+  "atlassian.net,docs.google.com,read.amazon.com,read.readwise.io,hypothes.is,chatgpt.com,github.com,notion.so,notion.site,office.com,sharepoint.com,canva.com,figma.com"
+);
+
+// Whether the menu is not shown, or is hidden, when the page shows its own
+// floating menu next to the selected text.
+pref("browser.highlightToSearch.detectPageMenus", true);
+
 // Spin the cursor while the page is loading
 pref("browser.spin_cursor_while_busy", false);
 
@@ -3877,7 +3888,7 @@ pref("toolkit.rust-components.logging.crates", "");
 pref("toolkit.rust-components.logging.internal-level", "Warn");
 
 // Settings Redesign 2025 prefs
-pref("browser.settings-redesign.enabled", true);
+pref("browser.settings-redesign.enabled", true, locked);
 
 // Gates the in-progress Notifications sub-page and its entry card in
 // Permissions and data. Not part of the settings-redesign section scheme, since

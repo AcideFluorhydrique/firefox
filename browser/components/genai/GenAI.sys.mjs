@@ -155,6 +155,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
   null,
   (_pref, _old, val) => Glean.selectionMenu.searchEnabled.set(val)
 );
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "highlightToSearchIgnoredSites",
+  "browser.highlightToSearch.ignoredSites",
+  "",
+  updateIgnoredSites
+);
 XPCOMUtils.defineLazyPreferenceGetter(lazy, "sidebarRevamp", "sidebar.revamp");
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
@@ -450,10 +457,12 @@ export const GenAI = {
     lazy.chatProviders;
     lazy.chatShortcuts;
     lazy.chatShortcutsIgnoreFields;
+    lazy.highlightToSearchIgnoredSites;
 
     // Apply initial ordering of providers
     reorderChatProviders();
     updateIgnoredInputs();
+    updateIgnoredSites();
 
     // Handle nimbus feature pref setting
     const feature = lazy.NimbusFeatures.chatbot;
@@ -1155,8 +1164,9 @@ export const GenAI = {
    *   y: number,
    * }} data for the message
    * @param {MozBrowser} browser that provided the message
+   * @param {nsIURI} [documentURI] URI of the frame that sent the message
    */
-  handleShortcutsMessage(name, data, browser) {
+  handleShortcutsMessage(name, data, browser, documentURI) {
     const isInBrowserStack = browser?.closest(".browserStack");
 
     const isSmartWindow =
@@ -1171,6 +1181,17 @@ export const GenAI = {
         ? !lazy.chatShortcutsSmartWindow
         : !this.canShowSelectionMenu)
     ) {
+      return;
+    }
+
+    if (
+      !isSmartWindow &&
+      lazy.highlightToSearchFeatureGate &&
+      this.isIgnoredSite(documentURI)
+    ) {
+      if (name == "GenAI:ShowShortcuts") {
+        Glean.selectionMenu.suppressed.record({ reason: "site_list" });
+      }
       return;
     }
 
@@ -1202,6 +1223,13 @@ export const GenAI = {
         }
         break;
       }
+      case "GenAI:SuppressedShortcuts": {
+        if (!isSmartWindow && shortcutPanel.state != "closed") {
+          Glean.selectionMenu.suppressed.record({ reason: data.reason });
+          shortcutPanel.hide();
+        }
+        break;
+      }
       case "GenAI:ShowShortcuts": {
         // Save the latest selection so it can be used by popup
         shortcutPanel.selectionData = { ...data, browser };
@@ -1217,6 +1245,11 @@ export const GenAI = {
         if (!hasActions) {
           // Nothing to offer: don't open an empty menu or log an impression
           // of one, and close any menu left from the previous selection.
+          shortcutPanel.hide();
+          return;
+        }
+        if (!isSmartWindow && data.pageMenu) {
+          Glean.selectionMenu.suppressed.record({ reason: "page_menu" });
           shortcutPanel.hide();
           return;
         }
@@ -1338,6 +1371,25 @@ export const GenAI = {
     // Also, it's not useful for most Document Picture-in-Picture API use-cases.
     const isPopup = browser.documentGlobal.toolbar?.visible === false;
     return !browser.browsingContext?.isDocumentPiP && !isPopup;
+  },
+
+  /**
+   * Whether the page is on a site whose own menu for selected text the actions
+   * menu would overlap. A site in the list also matches its subdomains.
+   *
+   * @param {nsIURI | null} uri URI of the frame the selection is in
+   * @returns {boolean}
+   */
+  isIgnoredSite(uri) {
+    let host;
+    try {
+      host = uri.asciiHost;
+    } catch {
+      return false;
+    }
+    return this.ignoredSites.some(
+      site => host == site || host.endsWith("." + site)
+    );
   },
 
   /**
@@ -2245,6 +2297,16 @@ function reorderChatProviders() {
   // Hide unremoved providers before re-adding visible ones in order
   GenAI.chatProviders.forEach(val => (val.hidden = true));
   toSet.forEach(args => GenAI.chatProviders.set(...args));
+}
+
+/**
+ * Update ignored sites list.
+ */
+function updateIgnoredSites() {
+  GenAI.ignoredSites = lazy.highlightToSearchIgnoredSites
+    .split(",")
+    .map(site => site.trim().toLowerCase())
+    .filter(site => site);
 }
 
 /**

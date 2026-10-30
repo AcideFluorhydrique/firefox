@@ -33,6 +33,7 @@ use crate::pushconnection::{Event, PushConnection};
 const PROGRAM: &str = env!("CARGO_BIN_NAME");
 
 const COMPATIBILITY_FILENAME: &str = "compatibility.ini";
+
 /// File that every Firefox profile directory carries, used to tell a profile
 /// apart from an arbitrary directory. Currently this is compatibility.ini
 const PROFILE_MARKER: &str = COMPATIBILITY_FILENAME;
@@ -265,6 +266,20 @@ fn run(profile: &Path, firefox_path: &Path) -> ExitCode {
         }
     };
 
+    // Get the handle for the stop event while the profile still exists because
+    // the event's name cannot be resolved once the profile is deleted
+    let stop_signal = match lifecycle::StopSignal::open(Some(profile)) {
+        Ok(Some(signal)) => signal,
+        Ok(None) => {
+            eprintln!("{PROGRAM}: the stop event is missing");
+            return ExitCode::FAILURE;
+        }
+        Err(message) => {
+            eprintln!("{PROGRAM}: {message}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     println!("Starting to fetch notifications 🦀 🦊");
     println!("profile: {}", profile.display());
 
@@ -272,22 +287,37 @@ fn run(profile: &Path, firefox_path: &Path) -> ExitCode {
     let task_firefox_path = firefox_path.to_owned();
 
     let worker = thread::spawn(move || {
-        // TODO: all of the websocket work goes here. Connect to the push
-        // service and keep reading notifications until the connection is
-        // closed out from under this thread.
         let interval_time_ms = get_interval_time() * 1000;
         let duration = time::Duration::from_millis(interval_time_ms);
 
         println!("Starting check loop");
         loop {
+
+            // Check if the profile still exists
+            if let Err(message) = check_profile(&task_profile_path) {
+                eprintln!("{PROGRAM}: {message}");
+                let _ = stop_signal.send();
+                break;
+            }
+
             println!("Checking for Firefox");
             if !is_firefox_running(&task_profile_path) {
                 if let Ok(Some((uaid, server_url))) = load_prefs(&task_profile_path) {
                     println!("Starting push connection");
 
                     match handle_push_connection(&uaid, &server_url, &task_profile_path) {
-                        Ok(true) => { println!("Notification received - starting Firefox");
-                            launch_firefox(&task_profile_path, &task_firefox_path); },
+                        Ok(true) => {
+
+                            // Check if the profile still exists
+                            if let Err(message) = check_profile(&task_profile_path) {
+                                eprintln!("{PROGRAM}: {message}");
+                                let _ = stop_signal.send();
+                                break;
+                            }
+
+                            println!("Notification received - starting Firefox");
+                            launch_firefox(&task_profile_path, &task_firefox_path);
+                        },
                         Ok(false) => println!("No notification received"),
                         Err(e) => eprintln!("Push connection failed: {e}")
                     }

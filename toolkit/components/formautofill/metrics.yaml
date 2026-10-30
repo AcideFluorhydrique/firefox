@@ -25,6 +25,41 @@ formautofill.creditcards:
       - autofill@lists.mozilla.org
       - passwords-dev@mozilla.org
     expires: never
+  saved_count:
+    type: quantity
+    unit: credit cards
+    lifetime: application
+    description: >
+      The number of credit cards saved in the store serving them. Read when the
+      store loads at startup and after every change, so it is sent on every
+      metrics ping, unlike autofill_profiles_count, which is only set when a
+      card is added or edited.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2086210
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2086210
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - autofill@lists.mozilla.org
+    expires: never
+  saved_cvv_count:
+    type: quantity
+    unit: credit cards
+    lifetime: application
+    description: >
+      The number of saved credit cards that have a security code (CVV) saved.
+      Read and sent like saved_count. Reports only the count, never the code
+      or its length.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2086210
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2086210
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - autofill@lists.mozilla.org
+    expires: never
   migrate_to_rust:
     type: event
     description: >
@@ -1438,8 +1473,10 @@ creditcard:
       creditcard.detected#cc_form_v2.
     bugs: &creditcard_detected_bugs
       - https://bugzil.la/1757731
+      - https://bugzil.la/2086235
     data_reviews: &creditcard_detected_data_reviews
       - https://bugzil.la/1757731
+      - https://bugzil.la/2086235
     notification_emails: &creditcard_detected_emails
       - autofill@lists.mozilla.org
       - passwords-dev@mozilla.org
@@ -1474,6 +1511,10 @@ creditcard:
       cc_exp_year:
         description: >
           credit card expiration year
+        type: string
+      cc_csc:
+        description: >
+          credit card security code (CVV) field result
         type: string
       field_name:
         description: >
@@ -1516,8 +1557,10 @@ creditcard:
       - interaction
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1837161
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2086235
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1837161
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2086235
     notification_emails:
       - autofill@lists.mozilla.org
     expires: never
@@ -1542,6 +1585,9 @@ creditcard:
         type: string
       cc_exp_year:
         description: Credit card expiration year result
+        type: string
+      cc_csc:
+        description: Credit card security code (CVV) field result
         type: string
 
   filled_modified_cc_form_v2:

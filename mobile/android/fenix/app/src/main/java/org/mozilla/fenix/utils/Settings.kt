@@ -3440,11 +3440,7 @@ class Settings(
         )
 
     /** Whether customizing the browser menu is allowed. */
-    var isMenuCustomizationEnabled by
-        booleanPreference(
-            key = appContext.getPreferenceKey(R.string.pref_key_enable_menu_customization),
-            default = { false },
-        )
+    val isMenuCustomizationEnabled = true
 
     /** Whether entering the browser menu customization screen is allowed. */
     var isMenuCustomizationScreenEnabled by
@@ -3559,6 +3555,12 @@ class Settings(
         booleanPreference(
             key = appContext.getPreferenceKey(R.string.pref_key_enable_sync_decoupling),
             default = { FxNimbus.features.accountSyncDecouple.value().enabled },
+        )
+
+    var isQwacUiEnabled by
+        booleanPreference(
+            key = appContext.getPreferenceKey(R.string.pref_key_enable_qwac_ui),
+            default = false,
         )
 
     private var powerSavingModeAutoPreference by
