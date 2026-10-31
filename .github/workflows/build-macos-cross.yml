@@ -68,15 +68,43 @@ jobs:
       - name: Package
         run: ./mach package
 
-      - name: List packages
-        run: ls -lh objdir-mac/dist/
+      # 不猜檔名：先把 dist/ 整個列出來，找得到 dmg/tar/zip/pkg 就收；
+      # 什麼都沒有的話，直接把編好的 .app 打成 tar.xz（tar 會保留執行權限和符號連結，
+      # 直接讓 upload-artifact 打包 .app 會弄丟執行權限，App 會打不開）
+      # 在 Linux 上交叉編譯時，mach package 產出的是 firefox-<版本>.en-US.mac.tar（沒有壓縮的 .tar），
+      # 不是 .dmg。這裡試著用 Mozilla 的 repackage 工具把它轉成 .dmg，失敗也不影響後面。
+      - name: Repackage as DMG (best effort)
+        run: |
+          TAR=$(ls objdir-mac/dist/firefox-*.mac.tar 2>/dev/null | head -n1)
+          if [ -n "$TAR" ]; then
+            ./mach repackage dmg --input "$TAR" --output "${TAR%.tar}.dmg" \
+              || echo "repackage dmg 失敗，改上傳 tar"
+          fi
 
-      # 交叉編譯有時產出 .dmg，有時是 .tar.gz（裡面是 Firefox.app），兩種都上傳
+      - name: Collect package
+        run: |
+          echo "=== objdir-mac/dist ==="
+          ls -la objdir-mac/dist/
+          mkdir -p out
+          DMG=$(ls objdir-mac/dist/firefox-*.mac.dmg 2>/dev/null | head -n1)
+          TAR=$(ls objdir-mac/dist/firefox-*.mac.tar 2>/dev/null | head -n1)
+          if [ -n "$DMG" ]; then
+            cp -v "$DMG" out/
+          elif [ -n "$TAR" ]; then
+            # tar 本身沒壓縮（400MB 左右），用 xz 壓小再上傳
+            xz -T0 -6 -c "$TAR" > "out/$(basename "$TAR").xz"
+          fi
+          if [ -z "$(ls -A out)" ]; then
+            APP=$(find objdir-mac/dist -maxdepth 2 -type d -name '*.app' | head -n1)
+            if [ -z "$APP" ]; then echo "找不到任何 .app"; exit 1; fi
+            echo "沒有找到安裝包，改把 $APP 打包成 tar.xz"
+            tar -C "$(dirname "$APP")" -cJf out/firefox-macos-${{ inputs.target }}.app.tar.xz "$(basename "$APP")"
+          fi
+          ls -lh out
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: firefox-macos-cross-${{ inputs.target }}
-          path: |
-            objdir-mac/dist/*.dmg
-            objdir-mac/dist/firefox-*.tar.*
+          path: out/*
           if-no-files-found: error
