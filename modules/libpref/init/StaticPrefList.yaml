@@ -10051,7 +10051,7 @@
   # Improve field initializer bytecode.
 - name: javascript.options.experimental.inline_simple_field_initializers
   type: bool
-  value: false
+  value: true
   mirror: always
   set_spidermonkey_pref: startup
 
@@ -11703,6 +11703,13 @@
 - name: layout.css.text-autospace.enabled
   type: bool
   value: true
+  mirror: always
+
+# Is support for CSS text-autospace-size property enabled?
+# https://github.com/w3c/csswg-drafts/issues/8510#issuecomment-6438888621
+- name: layout.css.text-autospace-size.enabled
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Is support for CSS text-box property enabled?
