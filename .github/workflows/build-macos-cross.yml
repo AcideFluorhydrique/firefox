@@ -1,0 +1,122 @@
+name: Build Firefox macOS (cross-compile on Linux)
+
+# 在 Linux runner 上交叉編譯 macOS 版 Firefox，Mozilla 自己的 CI 也是這樣編 Mac 版的。
+# 好處：不用排 Mac runner、Linux runner 免費額度不乘 10 倍。
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "原始碼 repo（預設直接用 Mozilla 官方）"
+        required: true
+        default: "mozilla-firefox/firefox"
+        type: string
+      source_ref:
+        description: "分支 / tag / commit"
+        required: true
+        default: "main"
+        type: string
+      target:
+        description: "目標 CPU"
+        required: true
+        default: "aarch64-apple-darwin"
+        type: choice
+        options:
+          - aarch64-apple-darwin   # Apple Silicon
+          - x86_64-apple-darwin    # Intel Mac
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      MOZCONFIG: ${{ github.workspace }}/../mozconfig-ci
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.source_repo }}
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 1
+
+      - name: Cache ~/.mozbuild (toolchains, macOS SDK)
+        uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-maccross-${{ inputs.target }}-${{ hashFiles('python/mozboot/**') }}
+          restore-keys: |
+            mozbuild-maccross-${{ inputs.target }}-
+
+      # --enable-bootstrap 讓 mach 自動下載交叉編譯需要的東西（clang、macOS SDK、dmg 打包工具）
+      - name: Write mozconfig
+        run: |
+          cat > "$MOZCONFIG" <<EOF
+          ac_add_options --enable-project=browser
+          ac_add_options --target=${{ inputs.target }}
+          ac_add_options --enable-bootstrap
+          ac_add_options --disable-debug-symbols
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objdir-mac
+          EOF
+          cat "$MOZCONFIG"
+
+      # bootstrap 只裝了 Linux 本機用的 Rust std，交叉編譯還要補上 macOS 目標的 std
+      - name: Bootstrap
+        run: |
+          ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+          rustup target add ${{ inputs.target }}
+
+      - name: Build
+        run: ./mach build
+
+      - name: Package
+        run: ./mach package
+
+      # 不猜檔名：先把 dist/ 整個列出來，找得到 dmg/tar/zip/pkg 就收；
+      # 什麼都沒有的話，直接把編好的 .app 打成 tar.xz（tar 會保留執行權限和符號連結，
+      # 直接讓 upload-artifact 打包 .app 會弄丟執行權限，App 會打不開）
+      # 在 Linux 上交叉編譯時，mach package 產出的是 firefox-<版本>.en-US.mac.tar（沒有壓縮的 .tar），
+      # 不是 .dmg。這裡試著用 Mozilla 的 repackage 工具把它轉成 .dmg，失敗也不影響後面。
+      - name: Repackage as DMG (best effort)
+        run: |
+          TAR=$(ls objdir-mac/dist/firefox-*.mac.tar 2>/dev/null | head -n1)
+          if [ -n "$TAR" ]; then
+            ./mach repackage dmg --input "$TAR" --output "${TAR%.tar}.dmg" \
+              || echo "repackage dmg 失敗，改上傳 tar"
+          fi
+
+      - name: Collect package
+        run: |
+          echo "=== objdir-mac/dist ==="
+          ls -la objdir-mac/dist/
+          mkdir -p out
+          DMG=$(ls objdir-mac/dist/firefox-*.mac.dmg 2>/dev/null | head -n1)
+          TAR=$(ls objdir-mac/dist/firefox-*.mac.tar 2>/dev/null | head -n1)
+          if [ -n "$DMG" ]; then
+            cp -v "$DMG" out/
+          elif [ -n "$TAR" ]; then
+            # tar 本身沒壓縮（400MB 左右），用 xz 壓小再上傳
+            xz -T0 -6 -c "$TAR" > "out/$(basename "$TAR").xz"
+          fi
+          if [ -z "$(ls -A out)" ]; then
+            APP=$(find objdir-mac/dist -maxdepth 2 -type d -name '*.app' | head -n1)
+            if [ -z "$APP" ]; then echo "找不到任何 .app"; exit 1; fi
+            echo "沒有找到安裝包，改把 $APP 打包成 tar.xz"
+            tar -C "$(dirname "$APP")" -cJf out/firefox-macos-${{ inputs.target }}.app.tar.xz "$(basename "$APP")"
+          fi
+          ls -lh out
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-macos-cross-${{ inputs.target }}
+          path: out/*
+          if-no-files-found: error

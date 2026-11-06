@@ -1,0 +1,100 @@
+name: Build Firefox macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "原始碼 repo（預設直接用 Mozilla 官方）"
+        required: true
+        default: "mozilla-firefox/firefox"
+        type: string
+      source_ref:
+        description: "分支 / tag / commit"
+        required: true
+        default: "main"
+        type: string
+      runner:
+        description: "Runner / CPU 架構"
+        required: true
+        default: "macos-latest"
+        type: choice
+        options:
+          - macos-latest     # Apple Silicon (arm64)
+          - macos-15-intel   # Intel (x86_64)
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+
+    env:
+      MOZCONFIG: ${{ github.workspace }}/../mozconfig-ci
+
+    steps:
+      # macOS runner 硬碟很小：清掉 Android SDK、.NET、模擬器和多餘的 Xcode
+      - name: Free disk space
+        run: |
+          sudo rm -rf ~/Library/Android /usr/local/share/dotnet ~/.dotnet \
+                      ~/Library/Developer/CoreSimulator/Caches || true
+          xcrun simctl delete all || true
+          CURRENT_XCODE=$(xcode-select -p | sed 's|/Contents/Developer||')
+          for x in /Applications/Xcode*.app; do
+            if [ "$x" != "$CURRENT_XCODE" ] && [ ! -L "$x" ]; then sudo rm -rf "$x"; fi
+          done
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.source_repo }}
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 1
+
+      - name: Cache ~/.mozbuild (toolchains, macOS SDK)
+        uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-macos-${{ runner.arch }}-${{ hashFiles('python/mozboot/**') }}
+          restore-keys: |
+            mozbuild-macos-${{ runner.arch }}-
+
+      - name: Write mozconfig
+        run: |
+          cat > "$MOZCONFIG" <<'EOF'
+          ac_add_options --enable-project=browser
+          ac_add_options --disable-debug-symbols
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objdir-opt
+          EOF
+          cat "$MOZCONFIG"
+
+      - name: Bootstrap
+        run: ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+
+      # mach build 結束時會呼叫 terminal-notifier 跳桌面通知，在沒有登入畫面的 runner 上會永遠卡住。
+      # runner 上的 terminal-notifier 是 Ruby gem 裝的（不是 brew），所以全部刪掉，
+      # 再放一個「什麼都不做、直接成功」的假 terminal-notifier 在 PATH 最前面，雙重保險。
+      - name: Disable build-complete notification
+        run: |
+          for p in $(which -a terminal-notifier 2>/dev/null); do sudo rm -f "$p"; done
+          gem uninstall -a -x terminal-notifier 2>/dev/null || true
+          mkdir -p "$HOME/stub-bin"
+          printf '#!/bin/sh\nexit 0\n' > "$HOME/stub-bin/terminal-notifier"
+          chmod +x "$HOME/stub-bin/terminal-notifier"
+          echo "$HOME/stub-bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        timeout-minutes: 300
+        run: ./mach build
+
+      - name: Package
+        run: ./mach package
+
+      - name: List packages
+        run: ls -lh objdir-opt/dist/ && df -h
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-macos-${{ runner.arch }}
+          path: objdir-opt/dist/*.dmg
+          if-no-files-found: error
