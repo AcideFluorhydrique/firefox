@@ -23,6 +23,19 @@ on:
           - arm-linux-androideabi   # 舊款 32 位元手機
           - x86_64-linux-android    # 模擬器
 
+  # 讓 release-firefox.yml 可以直接呼叫
+  workflow_call:
+    inputs:
+      source_repo:
+        type: string
+        default: "mozilla-firefox/firefox"
+      source_ref:
+        type: string
+        default: "main"
+      target:
+        type: string
+        required: true
+
 jobs:
   build:
     runs-on: ubuntu-latest

@@ -22,6 +22,19 @@ on:
           - macos-latest     # Apple Silicon (arm64)
           - macos-15-intel   # Intel (x86_64)
 
+  # 讓 release-firefox.yml 可以直接呼叫
+  workflow_call:
+    inputs:
+      source_repo:
+        type: string
+        default: "mozilla-firefox/firefox"
+      source_ref:
+        type: string
+        default: "main"
+      runner:
+        type: string
+        required: true
+
 jobs:
   build:
     runs-on: ${{ inputs.runner }}

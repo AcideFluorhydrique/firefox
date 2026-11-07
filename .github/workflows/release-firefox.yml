@@ -1,0 +1,142 @@
+name: Release Firefox
+
+# 每天檢查 Mozilla 官方 release 分支的版本號，
+# 這個 repo 還沒有對應的 GitHub Release 就編譯所有平台並發一個新的 Release。
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "上游分支（release = 正式版，beta = 測試版）"
+        required: true
+        default: "release"
+        type: choice
+        options:
+          - release
+          - beta
+      force:
+        description: "已經有同版本的 Release 也重新編譯（會覆蓋同名檔案）"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-firefox
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.v.outputs.build }}
+      version: ${{ steps.v.outputs.version }}
+      sha: ${{ steps.v.outputs.sha }}
+      branch: ${{ steps.v.outputs.branch }}
+    steps:
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.branch || 'release' }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          sha=$(git ls-remote https://github.com/mozilla-firefox/firefox "refs/heads/$BRANCH" | cut -f1)
+          [ -n "$sha" ] || { echo "找不到上游分支 $BRANCH"; exit 1; }
+          version=$(curl -fsSL "https://raw.githubusercontent.com/mozilla-firefox/firefox/$sha/browser/config/version_display.txt" | tr -d '[:space:]')
+          [ -n "$version" ] || { echo "讀不到版本號"; exit 1; }
+          build=true
+          if gh release view "v$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$FORCE" != "true" ]; then
+            build=false
+          fi
+          echo "上游 $BRANCH = $sha，版本 $version，要編譯: $build"
+          {
+            echo "sha=$sha"
+            echo "version=$version"
+            echo "build=$build"
+            echo "branch=$BRANCH"
+          } >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      source_ref: ${{ needs.check.outputs.sha }}
+
+  windows:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      source_ref: ${{ needs.check.outputs.sha }}
+
+  macos-arm64:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      source_ref: ${{ needs.check.outputs.sha }}
+      runner: macos-latest
+
+  macos-x64:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      source_ref: ${{ needs.check.outputs.sha }}
+      runner: macos-15-intel
+
+  fenix-arm64:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/build-fenix.yml
+    with:
+      source_ref: ${{ needs.check.outputs.sha }}
+      target: aarch64-linux-android
+
+  # 全部平台都成功才發 Release；有任何一個失敗就不發，隔天排程會再試一次
+  publish:
+    needs: [check, linux, windows, macos-arm64, macos-x64, fenix-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Collect files
+        run: |
+          mkdir -p release
+          for dir in dist/*/; do
+            name=$(basename "$dir")
+            find "$dir" -type f | while read -r f; do
+              base=$(basename "$f" | tr ' ' '_')
+              cp "$f" "release/$name-$base"
+            done
+          done
+          ls -lh release
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          SHA: ${{ needs.check.outputs.sha }}
+          BRANCH: ${{ needs.check.outputs.branch }}
+        run: |
+          tag="v$VERSION"
+          notes="從 mozilla-firefox/firefox 的 \`$BRANCH\` 分支編譯（commit $SHA）。
+
+          - Linux / Windows / macOS：未簽名的官方原始碼編譯版
+          - Android：Fenix debug 版（包名 org.mozilla.fenix.debug），可以和官方 Firefox 同時安裝"
+          prerelease=""
+          [ "$BRANCH" = "release" ] || prerelease="--prerelease"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" release/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" release/* -R "$GITHUB_REPOSITORY" \
+              --title "Firefox $VERSION" --notes "$notes" --target ci $prerelease
+          fi

@@ -14,6 +14,16 @@ on:
         default: "main"
         type: string
 
+  # 讓 release-firefox.yml 可以直接呼叫
+  workflow_call:
+    inputs:
+      source_repo:
+        type: string
+        default: "mozilla-firefox/firefox"
+      source_ref:
+        type: string
+        default: "main"
+
 jobs:
   build:
     runs-on: ubuntu-latest
