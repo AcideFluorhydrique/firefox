@@ -1,6 +1,6 @@
 name: Release Firefox
 
-# 每天檢查 Mozilla 官方 release 分支的版本號，
+# 每天檢查 Mozilla 官方 release 分支（正式版 Firefox，約每月一個大版本）的版本號，
 # 這個 repo 還沒有對應的 GitHub Release 就編譯所有平台並發一個新的 Release。
 
 on:
@@ -8,14 +8,6 @@ on:
     - cron: "23 6 * * *"
   workflow_dispatch:
     inputs:
-      branch:
-        description: "上游分支（release = 正式版，beta = 測試版）"
-        required: true
-        default: "release"
-        type: choice
-        options:
-          - release
-          - beta
       force:
         description: "已經有同版本的 Release 也重新編譯（會覆蓋同名檔案）"
         required: false
@@ -41,7 +33,7 @@ jobs:
       - id: v
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH: ${{ inputs.branch || 'release' }}
+          BRANCH: release
           FORCE: ${{ inputs.force || false }}
         run: |
           sha=$(git ls-remote https://github.com/mozilla-firefox/firefox "refs/heads/$BRANCH" | cut -f1)
@@ -132,11 +124,9 @@ jobs:
 
           - Linux / Windows / macOS：未簽名的官方原始碼編譯版
           - Android：Fenix debug 版（包名 org.mozilla.fenix.debug），可以和官方 Firefox 同時安裝"
-          prerelease=""
-          [ "$BRANCH" = "release" ] || prerelease="--prerelease"
           if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" release/* --clobber -R "$GITHUB_REPOSITORY"
           else
             gh release create "$tag" release/* -R "$GITHUB_REPOSITORY" \
-              --title "Firefox $VERSION" --notes "$notes" --target ci $prerelease
+              --title "Firefox $VERSION" --notes "$notes" --target ci
           fi
