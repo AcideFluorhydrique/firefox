@@ -100,16 +100,23 @@ jobs:
         with:
           path: dist
 
+      # 只挑使用者要下載的安裝檔，並統一命名；測試用的 xpt_artifacts 和沒有 Gecko 的其他 ABI APK 不放進 Release
       - name: Collect files
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
           mkdir -p release
-          for dir in dist/*/; do
-            name=$(basename "$dir")
-            find "$dir" -type f | while read -r f; do
-              base=$(basename "$f" | tr ' ' '_')
-              cp "$f" "release/$name-$base"
-            done
-          done
+          pick() {
+            local src
+            src=$(find dist -type f -path "$1" ! -name '*xpt_artifacts*' | head -1)
+            [ -n "$src" ] || { echo "找不到 $1"; exit 1; }
+            cp "$src" "release/$2"
+          }
+          pick 'dist/firefox-linux-*/*.tar.*'        "firefox-$VERSION-linux-x86_64.tar.xz"
+          pick 'dist/firefox-windows-*/*.win64.zip'  "firefox-$VERSION-windows-x64.zip"
+          pick 'dist/firefox-macos-ARM64/*.dmg'      "firefox-$VERSION-macos-arm64.dmg"
+          pick 'dist/firefox-macos-X64/*.dmg'        "firefox-$VERSION-macos-x64.dmg"
+          pick 'dist/fenix-debug-*/*arm64-v8a*.apk'  "fenix-$VERSION-arm64-v8a-debug.apk"
           ls -lh release
 
       - name: Create release
