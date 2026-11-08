@@ -66,21 +66,22 @@ jobs:
     with:
       source_ref: ${{ needs.check.outputs.sha }}
 
+  # macOS 兩種架構都在 Linux 上交叉編譯（Mozilla 官方 CI 也是這樣做），不用排 Mac runner
   macos-arm64:
     needs: check
     if: needs.check.outputs.build == 'true'
-    uses: ./.github/workflows/build-macos.yml
+    uses: ./.github/workflows/build-macos-cross.yml
     with:
       source_ref: ${{ needs.check.outputs.sha }}
-      runner: macos-latest
+      target: aarch64-apple-darwin
 
   macos-x64:
     needs: check
     if: needs.check.outputs.build == 'true'
-    uses: ./.github/workflows/build-macos.yml
+    uses: ./.github/workflows/build-macos-cross.yml
     with:
       source_ref: ${{ needs.check.outputs.sha }}
-      runner: macos-15-intel
+      target: x86_64-apple-darwin
 
   fenix-arm64:
     needs: check
@@ -114,8 +115,18 @@ jobs:
           }
           pick 'dist/firefox-linux-*/*.tar.*'        "firefox-$VERSION-linux-x86_64.tar.xz"
           pick 'dist/firefox-windows-*/*.win64.zip'  "firefox-$VERSION-windows-x64.zip"
-          pick 'dist/firefox-macos-ARM64/*.dmg'      "firefox-$VERSION-macos-arm64.dmg"
-          pick 'dist/firefox-macos-X64/*.dmg'        "firefox-$VERSION-macos-x64.dmg"
+          # 交叉編譯通常會轉出 .dmg；轉檔失敗時是 .tar.xz，副檔名照原本的保留
+          pick_mac() {
+            local src
+            src=$(find "dist/firefox-macos-cross-$1" -type f | head -1)
+            [ -n "$src" ] || { echo "找不到 macOS $1 的檔案"; exit 1; }
+            case "$src" in
+              *.dmg) cp "$src" "release/firefox-$VERSION-macos-$2.dmg" ;;
+              *)     cp "$src" "release/firefox-$VERSION-macos-$2.tar.xz" ;;
+            esac
+          }
+          pick_mac aarch64-apple-darwin arm64
+          pick_mac x86_64-apple-darwin  x64
           pick 'dist/fenix-debug-*/*arm64-v8a*.apk'  "fenix-$VERSION-arm64-v8a-debug.apk"
           ls -lh release
 

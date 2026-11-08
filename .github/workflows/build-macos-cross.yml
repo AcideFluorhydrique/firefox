@@ -25,6 +25,19 @@ on:
           - aarch64-apple-darwin   # Apple Silicon
           - x86_64-apple-darwin    # Intel Mac
 
+  # 讓 release-firefox.yml 可以直接呼叫
+  workflow_call:
+    inputs:
+      source_repo:
+        type: string
+        default: "mozilla-firefox/firefox"
+      source_ref:
+        type: string
+        default: "main"
+      target:
+        type: string
+        required: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
