@@ -1,6 +1,7 @@
 name: Release Firefox
 
-# 每天檢查 Mozilla 官方 release 分支（正式版 Firefox，約每月一個大版本）的版本號，
+# 每天檢查 Mozilla 正式發布的 Firefox 版本（上游的 FIREFOX_<版本>_RELEASE tag，
+# 官方真的推送給使用者時才會打；release 分支會提前一週切到下一版做候選版，所以不看分支），
 # 這個 repo 還沒有對應的 GitHub Release 就編譯所有平台並發一個新的 Release。
 
 on:
@@ -28,28 +29,45 @@ jobs:
       build: ${{ steps.v.outputs.build }}
       version: ${{ steps.v.outputs.version }}
       sha: ${{ steps.v.outputs.sha }}
-      branch: ${{ steps.v.outputs.branch }}
+      tag: ${{ steps.v.outputs.tag }}
     steps:
       - id: v
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH: release
           FORCE: ${{ inputs.force || false }}
         run: |
-          sha=$(git ls-remote https://github.com/mozilla-firefox/firefox "refs/heads/$BRANCH" | cut -f1)
-          [ -n "$sha" ] || { echo "找不到上游分支 $BRANCH"; exit 1; }
-          version=$(curl -fsSL "https://raw.githubusercontent.com/mozilla-firefox/firefox/$sha/browser/config/version_display.txt" | tr -d '[:space:]')
-          [ -n "$version" ] || { echo "讀不到版本號"; exit 1; }
+          # 正式版 tag 例如 FIREFOX_159_0_1_RELEASE；排除 beta（..._0b3_...）和 ESR（..._0esr_...）
+          line=$(git ls-remote --tags https://github.com/mozilla-firefox/firefox 'refs/tags/FIREFOX_*_RELEASE' \
+            | grep -E 'refs/tags/FIREFOX_[0-9]+(_[0-9]+)+_RELEASE$' \
+            | sed -E 's#^([0-9a-f]+)\trefs/tags/FIREFOX_(.*)_RELEASE$#\2 \1#' \
+            | sed -E 's/_/./g' | sort -V | tail -1)
+          version=${line% *}
+          sha=${line#* }
+          [ -n "$version" ] && [ -n "$sha" ] || { echo "找不到正式版 tag"; exit 1; }
+          tag="FIREFOX_${version//./_}_RELEASE"
+          echo "上游最新正式版 $version（$tag = $sha）"
+
+          newest=$(gh release list -R "$GITHUB_REPOSITORY" --limit 100 --json tagName -q '.[].tagName' \
+            | sed 's/^v//' | sort -V | tail -1)
           build=true
-          if gh release view "v$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$FORCE" != "true" ]; then
-            build=false
+          if [ "$FORCE" = "true" ]; then
+            echo "force：強制重新編譯"
+          elif gh release view "v$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # 已經有同版本：如果當初是用同一個 commit 編的就跳過，不同（例如之前編的是候選版、官方最後改用 BUILD2）就重編覆蓋
+            if gh release view "v$version" -R "$GITHUB_REPOSITORY" --json body -q .body | grep -q "$sha"; then
+              build=false; echo "v$version 已存在且是同一個 commit"
+            else
+              echo "v$version 已存在但 commit 不同，重新編譯覆蓋"
+            fi
+          elif [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$version" "$newest" | sort -V | tail -1)" != "$version" ]; then
+            build=false; echo "已經有更新的 v$newest，不回頭編舊版"
           fi
-          echo "上游 $BRANCH = $sha，版本 $version，要編譯: $build"
+          echo "要編譯: $build"
           {
             echo "sha=$sha"
             echo "version=$version"
             echo "build=$build"
-            echo "branch=$BRANCH"
+            echo "tag=$tag"
           } >> "$GITHUB_OUTPUT"
 
   linux:
@@ -135,10 +153,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check.outputs.version }}
           SHA: ${{ needs.check.outputs.sha }}
-          BRANCH: ${{ needs.check.outputs.branch }}
+          UPSTREAM_TAG: ${{ needs.check.outputs.tag }}
         run: |
           tag="v$VERSION"
-          notes="從 mozilla-firefox/firefox 的 \`$BRANCH\` 分支編譯（commit $SHA）。
+          notes="從 mozilla-firefox/firefox 的正式版 tag \`$UPSTREAM_TAG\` 編譯（commit $SHA）。
 
           - Linux / Windows / macOS：未簽名的官方原始碼編譯版
           - Android：Fenix debug 版（包名 org.mozilla.fenix.debug），可以和官方 Firefox 同時安裝"
