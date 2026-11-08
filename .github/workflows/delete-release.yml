@@ -1,0 +1,27 @@
+name: Delete Release
+
+# 手動刪除一個 GitHub Release 和它的 tag（例如刪掉候選版，讓排程之後重新編正式版）
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要刪除的 Release tag，例如 v160.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json name,tagName,publishedAt
+          gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --cleanup-tag --yes
+          echo "已刪除 $TAG"
