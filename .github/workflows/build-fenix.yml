@@ -89,7 +89,13 @@ jobs:
           cat "$MOZCONFIG"
 
       - name: Bootstrap
-        run: ./mach --no-interactive bootstrap --application-choice="GeckoView/Firefox for Android Artifact Mode"
+        # 下載工具時偶爾會遇到 GitHub / CDN 的暫時性錯誤（例如 504），失敗就等一下再試，最多 3 次
+        run: |
+          for i in 1 2 3; do
+            ./mach --no-interactive bootstrap --application-choice="GeckoView/Firefox for Android Artifact Mode" && break
+            [ "$i" = 3 ] && exit 1
+            echo "bootstrap 失敗，60 秒後重試（第 $i 次）"; sleep 60
+          done
 
       - name: Build GeckoView (artifact mode)
         run: ./mach build
