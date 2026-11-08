@@ -61,6 +61,15 @@ jobs:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 200
 
+      - name: Get fixed debug keystore
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/../ci-keys"
+          curl -fsSL -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github.raw" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/.github/keys/fenix-debug.keystore?ref=${{ github.workflow_sha }}" \
+            -o "$GITHUB_WORKSPACE/../ci-keys/fenix-debug.keystore"
+          keytool -list -keystore "$GITHUB_WORKSPACE/../ci-keys/fenix-debug.keystore" -storepass android | grep -i fingerprint
+
       - name: Cache ~/.mozbuild (toolchains, Android SDK/NDK)
         uses: actions/cache@v4
         with:
@@ -85,8 +94,24 @@ jobs:
       - name: Build GeckoView (artifact mode)
         run: ./mach build
 
+      # Gradle 的 debug 簽名預設用 ~/.android/debug.keystore，runner 每次都是新的，會隨機產生一把；
+      # 改用 repo 裡固定的公開 debug 金鑰，每一版簽名都一樣，才能覆蓋更新（Obtainium 等）
+      - name: Use fixed debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          cp "$GITHUB_WORKSPACE/../ci-keys/fenix-debug.keystore" "$HOME/.android/debug.keystore"
+          echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
+
       - name: Build Fenix APK
         run: ./mach gradle fenix:assembleDebug
+
+      - name: Verify APK signature
+        run: |
+          APKSIGNER=$(ls -d ~/.mozbuild/android-sdk-linux/build-tools/*/apksigner | sort -V | tail -1)
+          for apk in $(find objdir-frontend/gradle/build -name '*.apk' -path '*outputs/apk*'); do
+            echo "== $apk"
+            "$APKSIGNER" verify --print-certs "$apk" | grep -i "SHA-256"
+          done
 
       - name: List APKs
         run: find objdir-frontend/gradle/build -name '*.apk' -path '*outputs/apk*' -exec ls -lh {} \;
