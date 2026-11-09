@@ -1,0 +1,99 @@
+name: Build Firefox Windows (cross-compile on Linux)
+
+# 在 Linux runner 上用 clang-cl 交叉編譯 Windows 版，Mozilla 官方 CI 也是這樣編 Windows 版的。
+# --enable-bootstrap 會自動下載 Windows SDK / MSVC 標頭檔，不需要 Windows runner。
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "原始碼 repo（預設直接用 Mozilla 官方）"
+        required: true
+        default: "mozilla-firefox/firefox"
+        type: string
+      source_ref:
+        description: "分支 / tag / commit"
+        required: true
+        default: "main"
+        type: string
+  # 讓 release-firefox.yml 可以直接呼叫
+  workflow_call:
+    inputs:
+      source_repo:
+        type: string
+        default: "mozilla-firefox/firefox"
+      source_ref:
+        type: string
+        default: "main"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      MOZCONFIG: ${{ github.workspace }}/../mozconfig-ci
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.source_repo }}
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 1
+
+      - name: Cache ~/.mozbuild (toolchains, Windows SDK)
+        uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-wincross-${{ hashFiles('python/mozboot/**') }}
+          restore-keys: |
+            mozbuild-wincross-
+
+      # msitools 提供 msiextract，bootstrap 要用它解開 Windows SDK 的 .msi
+      - name: Install msitools
+        run: sudo apt-get update && sudo apt-get install -y msitools
+
+      - name: Write mozconfig
+        run: |
+          cat > "$MOZCONFIG" <<'MOZ'
+          ac_add_options --enable-project=browser
+          ac_add_options --target=x86_64-pc-windows-msvc
+          ac_add_options --enable-bootstrap
+          ac_add_options --disable-debug-symbols
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objdir-win
+          MOZ
+          cat "$MOZCONFIG"
+
+      # 下載工具時偶爾會遇到 GitHub / CDN 的暫時性錯誤，失敗就等一下再試，最多 3 次
+      - name: Bootstrap
+        run: |
+          for i in 1 2 3; do
+            ./mach --no-interactive bootstrap --application-choice="Firefox for Desktop" && break
+            [ "$i" = 3 ] && exit 1
+            echo "bootstrap 失敗，60 秒後重試（第 $i 次）"; sleep 60
+          done
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Build
+        run: ./mach build
+
+      - name: Package
+        run: ./mach package
+
+      - name: List packages
+        run: ls -lh objdir-win/dist/ && df -h
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-windows-cross-x64
+          path: objdir-win/dist/firefox-*.win64.zip
+          if-no-files-found: error

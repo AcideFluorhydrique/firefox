@@ -118,6 +118,16 @@ jobs:
           sed -i 's/components\.strictMode\.enableStrictMode(true)/components.strictMode.enableStrictMode(false)/' "$f"
           grep -n 'enableStrictMode(' "$f"
 
+      # debug 版的版號預設是「1.0.年週」（例如 1.0.2646），跟 Release 的 Firefox 版號對不上，
+      # Obtainium 會一直以為有新版。改成跟 Gecko 一樣的版號（例如 159.0.1）。
+      - name: Use Firefox version as Fenix versionName
+        run: |
+          f=mobile/android/fenix/app/build.gradle
+          v=$(tr -d '[:space:]' < browser/config/version_display.txt)
+          grep -q 'versionName Config.generateDebugVersionName()' "$f"
+          sed -i "s/versionName Config.generateDebugVersionName()/versionName \"$v\"/" "$f"
+          grep -n "versionName \"" "$f"
+
       - name: Build Fenix APK
         run: ./mach gradle fenix:assembleDebug
 
