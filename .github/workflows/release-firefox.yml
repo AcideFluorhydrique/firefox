@@ -77,10 +77,11 @@ jobs:
     with:
       source_ref: ${{ needs.check.outputs.sha }}
 
+  # Windows 也在 Linux 上用 clang-cl 交叉編譯（Mozilla 官方 CI 也是這樣做），比 Windows runner 快、不用排隊
   windows:
     needs: check
     if: needs.check.outputs.build == 'true'
-    uses: ./.github/workflows/build-windows.yml
+    uses: ./.github/workflows/build-windows-cross.yml
     with:
       source_ref: ${{ needs.check.outputs.sha }}
 
@@ -132,7 +133,7 @@ jobs:
             cp "$src" "release/$2"
           }
           pick 'dist/firefox-linux-*/*.tar.*'        "firefox-$VERSION-linux-x86_64.tar.xz"
-          pick 'dist/firefox-windows-*/*.win64.zip'  "firefox-$VERSION-windows-x64.zip"
+          pick 'dist/firefox-windows-cross-*/*.win64.zip'  "firefox-$VERSION-windows-x64.zip"
           # 交叉編譯通常會轉出 .dmg；轉檔失敗時是 .tar.xz，副檔名照原本的保留
           pick_mac() {
             local src
