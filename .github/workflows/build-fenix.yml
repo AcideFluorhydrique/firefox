@@ -108,6 +108,16 @@ jobs:
           cp "$GITHUB_WORKSPACE/../ci-keys/fenix-debug.keystore" "$HOME/.android/debug.keystore"
           echo "ANDROID_USER_HOME=$HOME/.android" >> "$GITHUB_ENV"
 
+      # debug 版預設開 StrictMode penaltyDeath：主執行緒一有磁碟讀寫就故意閃退（給 Mozilla 開發者抓效能問題用）。
+      # 小米 HyperOS 等系統會在 App 啟動時插入自己的程式碼觸發違規，導致一開就閃退，所以只保留記錄、不閃退。
+      # 找不到要改的那行就直接失敗，避免上游改了寫法而我們沒發現。
+      - name: Disable StrictMode penaltyDeath
+        run: |
+          f=mobile/android/fenix/app/src/main/java/org/mozilla/fenix/FenixApplication.kt
+          grep -q 'components.strictMode.enableStrictMode(true)' "$f"
+          sed -i 's/components\.strictMode\.enableStrictMode(true)/components.strictMode.enableStrictMode(false)/' "$f"
+          grep -n 'enableStrictMode(' "$f"
+
       - name: Build Fenix APK
         run: ./mach gradle fenix:assembleDebug
 
