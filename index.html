@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firefox 自行編譯版</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1d2129;--muted:#5c6370;--line:#e3e6ea;--accent:#e66000;--accent-text:#fff;--warn-bg:#fff6e5;--warn-line:#f0c36d;--code:#eef1f4}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1e23;--text:#e6e8eb;--muted:#9aa1ab;--line:#2c3138;--warn-bg:#2a2414;--warn-line:#7a6326;--code:#252a31}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px 64px}
+header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:8px}
+h1{font-size:1.8rem;margin:0 0 4px}
+h2{font-size:1.2rem;margin:0 0 12px}
+.sub{color:var(--muted);margin:0}
+.lang{flex:none;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-top:16px}
+.ver{font-size:1.4rem;font-weight:600}
+.meta{color:var(--muted);font-size:.9rem}
+.dl{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:14px}
+.btn{display:block;text-decoration:none;border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:var(--text);background:var(--bg)}
+.btn strong{display:block}
+.btn span{color:var(--muted);font-size:.85rem}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text)}
+.btn.primary span{color:var(--accent-text);opacity:.85}
+.btn.off{opacity:.5;pointer-events:none}
+.warn{background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:10px;padding:12px 14px;margin-top:12px}
+ul{padding-left:1.2em;margin:8px 0}
+li{margin:4px 0}
+code{background:var(--code);border-radius:4px;padding:1px 5px;font-size:.88em;word-break:break-all}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+td{border-top:1px solid var(--line);padding:8px 6px;vertical-align:top}
+td:first-child{color:var(--muted);white-space:nowrap;width:1%}
+a{color:var(--accent)}
+footer{margin-top:24px;color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div><h1 data-i="title"></h1><p class="sub" data-i="subtitle"></p></div>
+  <button class="lang" id="lang" type="button"></button>
+</header>
+
+<section class="card">
+  <h2 data-i="latest"></h2>
+  <div class="ver" id="ver">…</div>
+  <div class="meta" id="meta"></div>
+  <div class="dl" id="dl"></div>
+  <div class="warn" id="err" hidden></div>
+</section>
+
+<section class="card"><h2 data-i="aboutTitle"></h2><div data-h="about"></div></section>
+<section class="card"><h2 data-i="detailsTitle"></h2><table id="details"></table></section>
+<section class="card"><h2 data-i="obtTitle"></h2><div data-h="obt"></div></section>
+<section class="card"><h2 data-i="notesTitle"></h2><div data-h="notes"></div></section>
+
+<footer><span data-h="footer"></span></footer>
+</main>
+<script>
+const CFG = {"repo": "AcideFluorhydrique/firefox", "assets": [{"id": "windows", "match": "windows-x64\\.zip$", "label": {"zh": "Windows", "en": "Windows"}, "hint": {"zh": "x64 · zip", "en": "x64 · zip"}}, {"id": "macos-arm64", "match": "macos-arm64\\.(dmg|tar\\.xz)$", "label": {"zh": "macOS（Apple 晶片）", "en": "macOS (Apple silicon)"}, "hint": {"zh": "arm64 · dmg", "en": "arm64 · dmg"}}, {"id": "macos-x64", "match": "macos-x64\\.(dmg|tar\\.xz)$", "label": {"zh": "macOS（Intel）", "en": "macOS (Intel)"}, "hint": {"zh": "x86_64 · dmg", "en": "x86_64 · dmg"}}, {"id": "linux", "match": "linux-x86_64\\.tar\\.xz$", "label": {"zh": "Linux", "en": "Linux"}, "hint": {"zh": "x86_64 · tar.xz", "en": "x86_64 · tar.xz"}}, {"id": "android", "match": "^fenix-.*arm64-v8a.*\\.apk$", "label": {"zh": "Android", "en": "Android"}, "hint": {"zh": "arm64 · apk", "en": "arm64 · apk"}}]};
+const T = {"zh": {"switch": "English", "latest": "最新版本", "loading": "讀取中…", "published": "發布於", "releaseNotes": "Release 頁面", "notInRelease": "這個版本沒有提供", "loadError": "無法讀取最新版本，請直接前往 <a href=\"{url}\">Release 頁面</a>。", "aboutTitle": "這是什麼", "detailsTitle": "技術資訊", "obtTitle": "自動更新", "notesTitle": "注意事項", "title": "Firefox 自行編譯版", "subtitle": "從 Mozilla 官方正式版原始碼自動編譯的 Firefox，桌面版與 Android 版。", "about": "<p>每天自動檢查 Mozilla 是否發布了新的正式版（上游的 <code>FIREFOX_&lt;版本&gt;_RELEASE</code> tag）。有新版時，從同一個 commit 編譯五個平台，全部成功才發布。</p><ul><li>只編譯正式版，不包含 Beta 或 Nightly。</li><li>原始碼沒有修改功能。桌面版使用 Firefox 原始碼預設的非官方品牌。</li><li>Windows 和 macOS 版都在 Linux 上交叉編譯，這也是 Mozilla 自己 CI 的做法。</li><li>Android 版的網頁引擎（GeckoView）直接使用 Mozilla 官方編譯的版本。</li></ul>", "details": [["版本依據", "上游 <code>FIREFOX_&lt;版本&gt;_RELEASE</code> tag"], ["檢查頻率", "每天一次"], ["Android 包名", "<code>org.mozilla.fenix.debug</code>（可與官方 Firefox 同時安裝）"], ["Android 簽名 SHA-256", "<code>6b4c8584e32e3b57607f14e5c30ad6610651c42468d69869d1cc0d47016c6545</code>"], ["桌面版簽名", "未簽名"], ["編譯流程", "<a href=\"https://github.com/AcideFluorhydrique/firefox/tree/ci/.github/workflows\">GitHub Actions workflows</a>"]], "obt": "<p>用 <a href=\"https://github.com/ImranR98/Obtainium\">Obtainium</a> 可以自動收到更新。</p><ul><li>來源網址：<code>https://github.com/AcideFluorhydrique/firefox</code></li><li>APK 篩選（Filter APKs by regular expression）：<code>fenix-.*\\.apk</code></li></ul><p>這個 Release 同時包含桌面版檔案，所以一定要設定 APK 篩選，Obtainium 才會挑到 Android 版。</p>", "notes": "<ul><li><strong>桌面版沒有程式碼簽名</strong>：macOS 第一次開啟時，要到「系統設定 → 隱私權與安全性」允許；Windows 可能出現 SmartScreen 警告。</li><li><strong>Android 版是 debug 版</strong>：使用 Fenix 的 debug 圖示，桌面上會多出一個「Leaks」（LeakCanary 記憶體檢測工具）。介面效能略低於官方正式版，網頁引擎則與官方相同。</li><li><strong>沒有 Google Safe Browsing</strong>：這需要 Mozilla 的金鑰，自行編譯的版本沒有，所以不會攔截已知的釣魚和惡意網站。</li><li><strong>預設設定與官方相同</strong>：遙測、贊助內容等選項跟官方版一樣，需要自己在設定裡調整。</li></ul>", "footer": "非 Mozilla 官方發布。Firefox 是 Mozilla Foundation 的商標。<a href=\"https://github.com/AcideFluorhydrique/firefox\">GitHub</a>"}, "en": {"switch": "中文", "latest": "Latest version", "loading": "Loading…", "published": "Published", "releaseNotes": "release page", "notInRelease": "Not included in this release", "loadError": "Could not load the latest release. Please go to the <a href=\"{url}\">release page</a>.", "aboutTitle": "About", "detailsTitle": "Details", "obtTitle": "Automatic updates", "notesTitle": "Notes", "title": "Firefox Builds", "subtitle": "Firefox for desktop and Android, built automatically from Mozilla's official release source.", "about": "<p>A daily job checks whether Mozilla has shipped a new release (the upstream <code>FIREFOX_&lt;version&gt;_RELEASE</code> tag). When it has, all five platforms are built from the same commit and published only if every build succeeds.</p><ul><li>Release channel only, no Beta or Nightly.</li><li>No functional changes to the source. Desktop builds use the unofficial branding that ships in the Firefox source.</li><li>Windows and macOS are cross-compiled on Linux, as in Mozilla's own CI.</li><li>The Android build uses the web engine (GeckoView) compiled by Mozilla.</li></ul>", "details": [["Version source", "Upstream <code>FIREFOX_&lt;version&gt;_RELEASE</code> tags"], ["Check frequency", "Daily"], ["Android package", "<code>org.mozilla.fenix.debug</code> (installs alongside the official Firefox)"], ["Android signing SHA-256", "<code>6b4c8584e32e3b57607f14e5c30ad6610651c42468d69869d1cc0d47016c6545</code>"], ["Desktop code signing", "None"], ["Build pipeline", "<a href=\"https://github.com/AcideFluorhydrique/firefox/tree/ci/.github/workflows\">GitHub Actions workflows</a>"]], "obt": "<p>Use <a href=\"https://github.com/ImranR98/Obtainium\">Obtainium</a> to get updates automatically.</p><ul><li>Source URL: <code>https://github.com/AcideFluorhydrique/firefox</code></li><li>Filter APKs by regular expression: <code>fenix-.*\\.apk</code></li></ul><p>Each release also contains desktop files, so the APK filter is required for Obtainium to pick the Android build.</p>", "notes": "<ul><li><strong>Desktop builds are not code-signed</strong>: on macOS, allow the app under System Settings → Privacy &amp; Security the first time; Windows may show a SmartScreen warning.</li><li><strong>The Android build is a debug build</strong>: it uses Fenix's debug icon and installs an extra \"Leaks\" launcher (LeakCanary). The UI is slightly slower than the official release; the web engine is the same.</li><li><strong>No Google Safe Browsing</strong>: it needs Mozilla's API key, which self-built versions do not have, so known phishing and malware sites are not blocked.</li><li><strong>Same defaults as the official release</strong>: telemetry, sponsored content and similar options must be changed in settings.</li></ul>", "footer": "Not an official Mozilla release. Firefox is a trademark of the Mozilla Foundation. <a href=\"https://github.com/AcideFluorhydrique/firefox\">GitHub</a>"}};
+const REPO = CFG.repo;
+let lang = (() => {
+  try { const s = localStorage.getItem("lang"); if (s === "zh" || s === "en") return s; } catch (e) {}
+  return /^zh/i.test(navigator.language || "") ? "zh" : "en";
+})();
+let release = null, loadError = false;
+
+function t(k) { return T[lang][k]; }
+function fmtSize(n) { return (n / 1048576).toFixed(0) + " MB"; }
+function fmtDate(s) { return new Date(s).toLocaleDateString(lang === "zh" ? "zh-TW" : "en", { year: "numeric", month: "long", day: "numeric" }); }
+
+function render() {
+  document.documentElement.lang = lang === "zh" ? "zh-Hant" : "en";
+  document.title = t("title");
+  document.querySelectorAll("[data-i]").forEach(e => e.textContent = t(e.dataset.i));
+  document.querySelectorAll("[data-h]").forEach(e => e.innerHTML = t(e.dataset.h));
+  document.getElementById("lang").textContent = t("switch");
+  document.getElementById("details").innerHTML = t("details").map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("");
+  const err = document.getElementById("err");
+  err.hidden = !loadError;
+  err.innerHTML = t("loadError").replace("{url}", `https://github.com/${REPO}/releases`);
+  const ver = document.getElementById("ver"), meta = document.getElementById("meta"), dl = document.getElementById("dl");
+  if (!release) { ver.textContent = loadError ? "—" : t("loading"); meta.textContent = ""; dl.innerHTML = ""; return; }
+  ver.textContent = release.name || release.tag_name;
+  meta.innerHTML = `${t("published")} ${fmtDate(release.published_at)} · <a href="${release.html_url}">${t("releaseNotes")}</a>`;
+  const best = guessPlatform();
+  dl.innerHTML = CFG.assets.map(a => {
+    const asset = release.assets.find(x => new RegExp(a.match).test(x.name));
+    const label = a.label[lang], hint = a.hint[lang];
+    if (!asset) return `<span class="btn off"><strong>${label}</strong><span>${t("notInRelease")}</span></span>`;
+    const cls = (a.id === best || CFG.assets.length === 1) ? "btn primary" : "btn";
+    return `<a class="${cls}" href="${asset.browser_download_url}"><strong>${label}</strong><span>${hint} · ${fmtSize(asset.size)}</span></a>`;
+  }).join("");
+}
+
+function guessPlatform() {
+  const ua = navigator.userAgent;
+  if (/Android/i.test(ua)) return "android";
+  if (/Windows/i.test(ua)) return "windows";
+  if (/Mac/i.test(ua)) return "macos-arm64";
+  if (/Linux/i.test(ua)) return "linux";
+  return "";
+}
+
+document.getElementById("lang").addEventListener("click", () => {
+  lang = lang === "zh" ? "en" : "zh";
+  try { localStorage.setItem("lang", lang); } catch (e) {}
+  render();
+});
+
+render();
+fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
+  .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .then(j => { release = j; render(); })
+  .catch(() => { loadError = true; render(); });
+</script>
+</body>
+</html>
