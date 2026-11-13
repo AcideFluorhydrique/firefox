@@ -1,5 +1,8 @@
 name: Release Firefox
 
+# Daily check for official Mozilla Firefox releases (upstream FIREFOX_<version>_RELEASE tags,
+# which are only tagged when actually pushed to users; the release branch switches to the next version's RC a week early, so branches are ignored).
+# If this repo doesn't have a corresponding GitHub Release yet, build all platforms and publish a new Release.
 # 每天檢查 Mozilla 正式發布的 Firefox 版本（上游的 FIREFOX_<版本>_RELEASE tag，
 # 官方真的推送給使用者時才會打；release 分支會提前一週切到下一版做候選版，所以不看分支），
 # 這個 repo 還沒有對應的 GitHub Release 就編譯所有平台並發一個新的 Release。
@@ -10,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "已經有同版本的 Release 也重新編譯（會覆蓋同名檔案）"
+        description: "Rebuild even if a release for this version already exists (overwrites existing files) / 已經有同版本的 Release 也重新編譯（會覆蓋同名檔案）"
         required: false
         default: false
         type: boolean
@@ -36,6 +39,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force || false }}
         run: |
+          # Official release tags such as FIREFOX_159_0_1_RELEASE; exclude beta (..._0b3_...) and ESR (..._0esr_...)
           # 正式版 tag 例如 FIREFOX_159_0_1_RELEASE；排除 beta（..._0b3_...）和 ESR（..._0esr_...）
           line=$(git ls-remote --tags https://github.com/mozilla-firefox/firefox 'refs/tags/FIREFOX_*_RELEASE' \
             | grep -E 'refs/tags/FIREFOX_[0-9]+(_[0-9]+)+_RELEASE$' \
@@ -43,26 +47,27 @@ jobs:
             | sed -E 's/_/./g' | sort -V | tail -1)
           version=${line% *}
           sha=${line#* }
-          [ -n "$version" ] && [ -n "$sha" ] || { echo "找不到正式版 tag"; exit 1; }
+          [ -n "$version" ] && [ -n "$sha" ] || { echo "Official release tag not found / 找不到正式版 tag"; exit 1; }
           tag="FIREFOX_${version//./_}_RELEASE"
-          echo "上游最新正式版 $version（$tag = $sha）"
+          echo "Latest upstream release: $version ($tag = $sha) / 上游最新正式版 $version（$tag = $sha）"
 
           newest=$(gh release list -R "$GITHUB_REPOSITORY" --limit 100 --json tagName -q '.[].tagName' \
             | sed 's/^v//' | sort -V | tail -1)
           build=true
           if [ "$FORCE" = "true" ]; then
-            echo "force：強制重新編譯"
+            echo "force: forcing rebuild / force：強制重新編譯"
           elif gh release view "v$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Release already exists for this version: skip if built from the same commit; otherwise (e.g., previously built from an RC and upstream later switched to BUILD2), rebuild and overwrite
             # 已經有同版本：如果當初是用同一個 commit 編的就跳過，不同（例如之前編的是候選版、官方最後改用 BUILD2）就重編覆蓋
             if gh release view "v$version" -R "$GITHUB_REPOSITORY" --json body -q .body | grep -q "$sha"; then
-              build=false; echo "v$version 已存在且是同一個 commit"
+              build=false; echo "v$version already exists with the same commit / v$version 已存在且是同一個 commit"
             else
-              echo "v$version 已存在但 commit 不同，重新編譯覆蓋"
+              echo "v$version already exists with a different commit, rebuilding to overwrite / v$version 已存在但 commit 不同，重新編譯覆蓋"
             fi
           elif [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$version" "$newest" | sort -V | tail -1)" != "$version" ]; then
-            build=false; echo "已經有更新的 v$newest，不回頭編舊版"
+            build=false; echo "Newer release v$newest already exists, skipping older version / 已經有更新的 v$newest，不回頭編舊版"
           fi
-          echo "要編譯: $build"
+          echo "Should build / 要編譯: $build"
           {
             echo "sha=$sha"
             echo "version=$version"
@@ -77,6 +82,7 @@ jobs:
     with:
       source_ref: ${{ needs.check.outputs.sha }}
 
+  # Cross-compile Windows on Linux using clang-cl (same as official Mozilla CI), faster than Windows runners with no queue wait
   # Windows 也在 Linux 上用 clang-cl 交叉編譯（Mozilla 官方 CI 也是這樣做），比 Windows runner 快、不用排隊
   windows:
     needs: check
@@ -85,6 +91,7 @@ jobs:
     with:
       source_ref: ${{ needs.check.outputs.sha }}
 
+  # Cross-compile both macOS architectures on Linux (same as official Mozilla CI), avoiding Mac runner queues
   # macOS 兩種架構都在 Linux 上交叉編譯（Mozilla 官方 CI 也是這樣做），不用排 Mac runner
   macos-arm64:
     needs: check
@@ -110,6 +117,7 @@ jobs:
       source_ref: ${{ needs.check.outputs.sha }}
       target: aarch64-linux-android
 
+  # Publish the Release only if all platforms succeed; if any job fails, skip publishing and retry on the next daily schedule
   # 全部平台都成功才發 Release；有任何一個失敗就不發，隔天排程會再試一次
   publish:
     needs: [check, linux, windows, macos-arm64, macos-x64, fenix-arm64]
@@ -120,6 +128,7 @@ jobs:
         with:
           path: dist
 
+      # Pick only user-facing installers and standardize filenames; exclude test xpt_artifacts and other ABI APKs without Gecko
       # 只挑使用者要下載的安裝檔，並統一命名；測試用的 xpt_artifacts 和沒有 Gecko 的其他 ABI APK 不放進 Release
       - name: Collect files
         env:
@@ -129,16 +138,17 @@ jobs:
           pick() {
             local src
             src=$(find dist -type f -path "$1" ! -name '*xpt_artifacts*' | head -1)
-            [ -n "$src" ] || { echo "找不到 $1"; exit 1; }
+            [ -n "$src" ] || { echo "File not found: $1 / 找不到 $1"; exit 1; }
             cp "$src" "release/$2"
           }
-          pick 'dist/firefox-linux-*/*.tar.*'        "firefox-$VERSION-linux-x86_64.tar.xz"
-          pick 'dist/firefox-windows-cross-*/*.win64.zip'  "firefox-$VERSION-windows-x64.zip"
+          pick 'dist/firefox-linux-*/*.tar.*'         "firefox-$VERSION-linux-x86_64.tar.xz"
+          pick 'dist/firefox-windows-cross-*/*.win64.zip' "firefox-$VERSION-windows-x64.zip"
+          # Cross-compilation normally produces .dmg; if packaging fails it falls back to .tar.xz, preserving the original extension
           # 交叉編譯通常會轉出 .dmg；轉檔失敗時是 .tar.xz，副檔名照原本的保留
           pick_mac() {
             local src
             src=$(find "dist/firefox-macos-cross-$1" -type f | head -1)
-            [ -n "$src" ] || { echo "找不到 macOS $1 的檔案"; exit 1; }
+            [ -n "$src" ] || { echo "File not found for macOS $1 / 找不到 macOS $1 的檔案"; exit 1; }
             case "$src" in
               *.dmg) cp "$src" "release/firefox-$VERSION-macos-$2.dmg" ;;
               *)     cp "$src" "release/firefox-$VERSION-macos-$2.tar.xz" ;;
@@ -146,7 +156,7 @@ jobs:
           }
           pick_mac aarch64-apple-darwin arm64
           pick_mac x86_64-apple-darwin  x64
-          pick 'dist/fenix-debug-*/*arm64-v8a*.apk'  "fenix-$VERSION-arm64-v8a-debug.apk"
+          pick 'dist/fenix-debug-*/*arm64-v8a*.apk' "fenix-$VERSION-arm64-v8a-debug.apk"
           ls -lh release
 
       - name: Create release
@@ -157,10 +167,15 @@ jobs:
           UPSTREAM_TAG: ${{ needs.check.outputs.tag }}
         run: |
           tag="v$VERSION"
-          notes="從 mozilla-firefox/firefox 的正式版 tag \`$UPSTREAM_TAG\` 編譯（commit $SHA）。
+          notes=$(printf '%s\n\n%s' \
+            "Built from official release tag \`$UPSTREAM_TAG\` of mozilla-firefox/firefox (commit $SHA).
+
+          - Linux / Windows / macOS: Unsigned builds compiled from official source code
+          - Android: Fenix debug build (package name: \`org.mozilla.fenix.debug\`), can be installed alongside official Firefox" \
+            "從 mozilla-firefox/firefox 的正式版 tag \`$UPSTREAM_TAG\` 編譯（commit $SHA）。
 
           - Linux / Windows / macOS：未簽名的官方原始碼編譯版
-          - Android：Fenix debug 版（包名 org.mozilla.fenix.debug），可以和官方 Firefox 同時安裝"
+          - Android：Fenix debug 版（包名 \`org.mozilla.fenix.debug\`），可以和官方 Firefox 同時安裝")
           if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" release/* --clobber -R "$GITHUB_REPOSITORY"
           else
